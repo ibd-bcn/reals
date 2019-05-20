@@ -80,11 +80,11 @@ dev.off()
 # Do you remember some samples that were in more than one sample?
 # Now we remove a plate
 reals <- filter(reals, 
-            `Sample Name` != "73w14c" & !grepl("290419bcn 102 a 108", `Experiment Name`), 
-            `Sample Name` != "10w14"  & !grepl("290419bcn 102 a 108", `Experiment Name`))
+            !(`Sample Name` == "73w14c" & grepl("290419bcn 102 a 108", `Experiment Name`)), 
+            !(`Sample Name` == "10w14"  & grepl("290419bcn 102 a 108", `Experiment Name`)))
 
 reals[reals$`Experiment Name` == "290419 bcn samples plat 3.eds" & 
-    reals$`Sample Name` == "44w0c", `Sample Name`] <- "41w14"
+    reals$`Sample Name` == "44w0c", "Sample Name"] <- "41w14"
 
 # Check the results
 multiple_exp <- reals %>%
@@ -292,20 +292,27 @@ aUPA = "#43a2ca"
 cols = c("C" = "grey", "TNF" = aTNF, "UPA" = aUPA)
 
 preplot <- dff %>%
-  mutate(condition = paste(remission, Study))
+  group_by(remission, Target, Location, Study) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
+  mutate(ymax = meanAU + sem, ymin = meanAU - sem)
 
-col <- preplot %>%
-  filter(Location == "colon") %>%
-  ggplot(aes(condition, AU, col = Study)) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_point(position = position_jitterdodge()) + # https://stackoverflow.com/a/24019668/2886003
-  facet_wrap( ~ Target, scales = "free", nrow = 1) +
+dodge <- position_dodge(width=0.9)
+preplot %>%
+  filter(Study != "C", !grepl("non-remiters", remission)) %>%
+  ggplot(aes(remission, meanAU, col = Study, group = Study)) +
+  geom_point() +
+  expand_limits(y = 0) +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.2) +
+  geom_line() +
+  geom_hline(data = filter(preplot, Study == "C"), 
+                aes(yintercept = ymin), linetype = "dotted") +
+  geom_hline(data = filter(preplot, Study == "C"), 
+                aes(yintercept = ymax), linetype = "dotted") +
+  facet_wrap(Location ~ Target, scales = "free", ncol = 4) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.title.x = element_blank(), legend.position="none") +
-  labs(title = "colon") +
-  stat_compare_means(comparisons = my_comparisons, method = "wilcox", tip.length = 0.05) +
-  scale_color_manual(values = cols)
+        axis.title.x = element_blank()) +
+  ylab("AU (mean\u00B1SEM)")
 
 ile <- preplot %>%
   filter(Location == "ileum") %>%
