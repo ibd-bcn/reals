@@ -9,6 +9,8 @@ library("patchwork")
 library("lubridate")
 library("broom")
 library("purrr")
+library("ggforce")
+library("ggrepel")
 
 bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
 bd_upa <- read_xls("data/M13-740_abbvie_database_210918.xls")
@@ -281,44 +283,6 @@ write_xlsx(as.data.frame(a[, 3:7]),
     "processed/anormal_high_markers_colon.xlsx")
 write_xlsx(dff, "processed/AU_markers.xlsx")
 
-# Plots ####
-
-today <- format(Sys.time(), "%Y%m%d")
-my_comparisons <- list(c("C C", "w0 TNF"),
-                       c("C C", "w0 UPA"),
-                       c("w0 UPA", "w0 TNF"),
-                       c("w14 remiters UPA", "w0 UPA"),
-                       c("w14 remiters TNF", "w0 TNF"))
-
-aTNF = "#a8ddb5"
-aUPA = "#43a2ca"
-cols = c("C" = "grey", "TNF" = aTNF, "UPA" = aUPA)
-
-preplot <- dff %>%
-  group_by(remission, Target, Location, Study) %>%
-  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
-  mutate(ymax = meanAU + sem, ymin = meanAU - sem)
-
-dodge <- position_dodge(width = 0.9)
-preplot %>%
-  filter(Study != "C", !grepl("non-remiters", remission)) %>%
-  ggplot(aes(remission, meanAU, col = Study, group = Study)) +
-  geom_point() +
-  expand_limits(y = 0) +
-  geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.2) +
-  geom_line() +
-  geom_hline(data = filter(preplot, Study == "C"),
-                aes(yintercept = ymin), linetype = "dotted") +
-  geom_hline(data = filter(preplot, Study == "C"),
-                aes(yintercept = ymax), linetype = "dotted") +
-  facet_wrap(Location ~ Target, scales = "free", ncol = 4) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.title.x = element_blank()) +
-  ylab("AU (mean\u00B1SEM)")
-
-
-
 ## Compare against controls ####
 l <- vector("list", length =  length(unique(dff$Target))*2*2*2)
 i <- 1
@@ -346,13 +310,15 @@ for (gene in unique(dff$Target)) {
 
 # Corregir fdr per numero de Targets (genes)
 vsC <- do.call(rbind, l) %>%
-  group_by(Target) %>%
+  group_by(Location, Study, remission) %>%
   nest() %>%
   mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
   unnest() %>%
   arrange(Location, Target, remission, -p.value) %>%
   select(Location, Target, remission, Study, p.value, fdr, method, alternative)
 
+vsC %>% group_by(Location, remission, Study) %>% summarise(n = n_distinct(Target))
+filter(vsC, p.value == fdr)
 write_xlsx(vsC, "processed/compare_with_controls.xlsx")
 
 ## Compare between studies ####
@@ -379,12 +345,15 @@ for (gene in unique(dff$Target)) {
 
 # Corregir fdr per numero de Targets (genes)
 between_studies <- do.call(rbind, l) %>%
-  group_by(Target) %>%
+  group_by(Location, remission) %>%
   nest() %>%
   mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
   unnest() %>%
   select(Location, Target, remission, p.value, fdr, method, alternative) %>%
   arrange(Location, Target, remission, -p.value)
+
+between_studies %>% group_by(Location, remission) %>% summarise(n = n_distinct(Target))
+filter(between_studies, p.value == fdr)
 write_xlsx(between_studies, "processed/compare_between_studies.xlsx")
 
 
@@ -413,11 +382,82 @@ for (gene in unique(dff$Target)) {
 
 # Corregir fdr per numero de Targets (genes)
 within_studies <- do.call(rbind, l) %>%
-  group_by(Target) %>%
+  group_by(Study, Location) %>%
   nest() %>%
   mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
   unnest() %>%
   select(Location, Target, Study, p.value, fdr, method, alternative) %>%
   arrange(Location, Target, Study, -p.value)
+filter(within_studies, p.value == fdr)
+
+ggplot(within_studies) +
+  geom_abline(slope = 1, intercept = 0, col = "grey") +
+  geom_point(aes(p.value, fdr, col = Target)) +
+  theme_bw()
 write_xlsx(within_studies, "processed/compare_whitin_studies.xlsx")
+
+# Plots ####
+
+today <- format(Sys.time(), "%Y%m%d")
+my_comparisons <- list(c("C C", "w0 TNF"),
+                       c("C C", "w0 UPA"),
+                       c("w0 UPA", "w0 TNF"),
+                       c("w14 remiters UPA", "w0 UPA"),
+                       c("w14 remiters TNF", "w0 TNF"))
+
+aTNF = "#a8ddb5"
+aUPA = "#43a2ca"
+cols = c("C" = "grey", "TNF" = aTNF, "UPA" = aUPA)
+
+preplot <- dff %>%
+  group_by(remission, Target, Location, Study) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
+  mutate(ymax = meanAU + sem, ymin = meanAU - sem)
+
+
+# Calculate the lin between the studies (problems when they cross??)
+d <- preplot %>%
+  filter(Study != "C", !grepl("non-remiters", remission)) %>%
+  group_by(Target, remission, Location) %>%
+  mutate(distU = (max(ymin) - min(ymax))/2,
+         orig = max(ymin) - distU/10, # Make them not overlap witht the error bars.
+         final = min(ymax) + distU/10,
+         center = distU + final)
+
+# Keep just one every two lines
+empty <- seq(from = 1, to = nrow(d), by = 2)
+d <- d[empty, ]
+
+dw <- merge(between_studies, d) %>%
+  filter(fdr < 0.05)
+
+ws <- within_studies %>%
+  mutate(remission = "w14 remiters")
+
+db <- preplot %>%
+  filter(Study != "C", !grepl("non-remiters", remission)) %>%
+  merge(ws) %>%
+  unique() %>%
+  filter(fdr < 0.05)
+
+preplot %>%
+  filter(Study != "C", !grepl("non-remiters", remission)) %>%
+  ggplot(aes(remission, meanAU)) +
+  geom_point(aes(col = Study, group = Study)) +
+  expand_limits(y = 0) +
+  geom_errorbar(aes(col = Study, group = Study, ymin = ymin, ymax = ymax), width = 0.2) +
+  geom_line(aes(col = Study, group = Study)) +
+  geom_hline(data = filter(preplot, Study == "C"),
+             aes(yintercept = ymin), linetype = "dotted") +
+  geom_hline(data = filter(preplot, Study == "C"),
+             aes(yintercept = ymax), linetype = "dotted") +
+  geom_segment(data = dw, aes(x = remission, y = orig, xend = remission, yend = final)) +
+  geom_text(data = dw, aes(x = remission, y = center), label = "\t*", size = 5) + # Dirty trick to dodge the symbol
+  geom_text(data = db, aes(x = remission, y = meanAU), label = "\t+", size = 3) + # Dirty trick to dodge the symbol
+  facet_grid(Target ~ Location, scales = "free_y") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank()) +
+  geom_segment(aes(xend = remission, yend = meanAU, group = remission)) +
+  ylab("AU (mean\u00B1SEM)")
 
