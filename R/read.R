@@ -117,7 +117,7 @@ preclean <- reals %>%
 
 antiTNF <- preclean %>%
   filter(grepl("[0-9]w", `Sample Name`, ignore.case = TRUE)) %>%
-  separate(`Sample Name`, c("Id", "Sample Name")) %>%
+  separate(`Sample Name`, c("Id", "Sample Name"), fill = "left") %>%
   mutate(`Sample Name` = tolower(`Sample Name`),
          Pacient_id = as.character(as.numeric(gsub("w.*", "", `Sample Name`))),
          Time = str_extract(`Sample Name`, "w[0-9]*"),
@@ -167,7 +167,8 @@ controls <- preclean %>%
   mutate(AU = 2^(-`ΔCт`)*1000,
          Location = case_when(grepl("[0-9]+ C|S", `Sample Name`) ~ "colon",
                               grepl(" ILI$", `Sample Name`) ~ "ileum")) %>%
-  separate(`Sample Name`, c("Id", "Patient_id", "Loc"), remove = FALSE) %>%
+  separate(`Sample Name`, c("Id", "Patient_id", "Loc"), remove = FALSE,
+           fill = "left") %>% # We fill from the left because some don't have two IDs
   select(-`ΔCт`)
 
 # To verify
@@ -298,7 +299,7 @@ preplot <- dff %>%
   summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
   mutate(ymax = meanAU + sem, ymin = meanAU - sem)
 
-dodge <- position_dodge(width=0.9)
+dodge <- position_dodge(width = 0.9)
 preplot %>%
   filter(Study != "C", !grepl("non-remiters", remission)) %>%
   ggplot(aes(remission, meanAU, col = Study, group = Study)) +
@@ -319,7 +320,7 @@ preplot %>%
 
 
 ## Compare against controls ####
-l <- vector("list", length = 4*2*2*2)
+l <- vector("list", length =  length(unique(dff$Target))*2*2*2)
 i <- 1
 for (gene in unique(dff$Target)) {
   for (site in unique(dff$Location)) {
@@ -355,7 +356,7 @@ vsC <- do.call(rbind, l) %>%
 write_xlsx(vsC, "processed/compare_with_controls.xlsx")
 
 ## Compare between studies ####
-l <- vector("list", length = 4*2*2)
+l <- vector("list", length =  length(unique(dff$Target))*2*2)
 i <- 1
 for (gene in unique(dff$Target)) {
   for (site in unique(dff$Location)) {
@@ -389,7 +390,7 @@ write_xlsx(between_studies, "processed/compare_between_studies.xlsx")
 
 
 ## Compare whitin studies ####
-l <- vector("list", length = 4*2*2)
+l <- vector("list", length =  length(unique(dff$Target))*2*2)
 i <- 1
 for (gene in unique(dff$Target)) {
   for (site in unique(dff$Location)) {
@@ -418,5 +419,5 @@ within_studies <- do.call(rbind, l) %>%
   unnest() %>%
   select(Location, Target, Study, p.value, fdr, method, alternative) %>%
   arrange(Location, Target, Study, -p.value)
-write_xlsx(between_studies, "processed/compare_whitin_studies.xlsx")
+write_xlsx(within_studies, "processed/compare_whitin_studies.xlsx")
 
