@@ -1,4 +1,3 @@
-library("xlsx")
 library("readxl")
 library("dplyr")
 library("stringr")
@@ -8,6 +7,8 @@ library("writexl")
 library("ggpubr")
 library("patchwork")
 library("lubridate")
+library("broom")
+library("purrr")
 
 bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
 bd_upa <- read_xls("data/M13-740_abbvie_database_210918.xls")
@@ -15,12 +16,12 @@ reals <- read_xls("data/SOX6 CHI3L1 PDGFD PTGDR2_20190516_115511_Results_Export.
     skip = 15, na = c("", "Undetermined"))
 reals2 <- read_xls("data/THY HTR3E RETNLB COL3A1_20190524_165141_Results_Export.xls",
     skip = 15, na = c("", "Undetermined"))
-reals <- reals2
 upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx")
 control_codes <- read_xlsx("data/RT CONTROLS 500NG 20 UL.xlsx")
 antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xlsx")
 
 # Clean the original data ####
+reals <- merge(reals, reals2, all = TRUE)
 
 # Check if some samples are in more than one plate
 multiple_exp <- reals %>%
@@ -83,6 +84,7 @@ if (nrow(erroneous) > 1) {
   dev.off()
 }
 
+# Correct ids or remove duplicated samples ####
 # Do you remember some samples that were in more than one sample?
 # Now we remove a plate
 reals <- filter(reals,
@@ -91,20 +93,20 @@ reals <- filter(reals,
 reals[reals$`Experiment Name` == "290419 bcn samples plat 3.eds" &
     reals$`Sample Name` == "44w0c", "Sample Name"] <- "41w14"
 
+reals$`Sample Name`[grep("UP11 ", reals$`Sample Name`)] <- "UP11 AB4216302"
+reals$`Sample Name`[grep("UP52 ", reals$`Sample Name`)] <- "UP52 Y46412103"
+reals$`Sample Name`[grepl("42W", reals$`Sample Name`, ignore.case = TRUE)] <- "48C 52w14c"
+
 write.csv(reals, "processed/reals.csv", row.names = FALSE)
 
-# Check the results
+# Check the results ####
 multiple_exp <- reals %>%
     group_by(`Sample Name`) %>%
     summarise(n = n_distinct(`Experiment Name`))
 m <-multiple_exp %>%
     group_by(n) %>%
     count()
-
-stopifnot(!any(m$n >= 2))
-
-
-reals$`Sample Name`[grepl("42W", reals$`Sample Name`, ignore.case = TRUE)] <- "48C 52w14c"
+# Normal same samples have been tested for several genes in different plates
 
 preclean <- reals %>%
   filter(`Target Name` != "BETA ACTINA") %>%
@@ -112,7 +114,6 @@ preclean <- reals %>%
   summarise(`ΔCт` = unique(`ΔCт Mean`)) %>%
   ungroup() %>%
   filter(!is.na(`ΔCт`))
-
 
 antiTNF <- preclean %>%
   filter(grepl("[0-9]w", `Sample Name`, ignore.case = TRUE)) %>%
@@ -146,13 +147,19 @@ UPA <- preclean %>%
   select(-`ΔCт`)
 
 # To verify
-UPA %>%
+incorrect <- UPA %>%
   group_by(Id, Pacient_id) %>%
   count() %>%
   ungroup() %>%
   group_by(Id) %>%
   count() %>%
-  filter(n != 1)
+  filter(n != 1) %>%
+  pull(Id)
+# Should be 0 or null
+stopifnot(length(incorrect) == 0)
+filter(upa_codes, `RT TUBE` %in% incorrect) %>%
+  mutate(sample = paste(`RT TUBE`, `nº muestra`)) %>%
+  pull(sample)
 
 controls <- preclean %>%
   mutate(`Sample Name` = gsub(" CONT", "CONT", `Sample Name`)) %>%
@@ -199,6 +206,7 @@ filter(df, Location != sample_location) %>%
   group_by(Sample_id) %>%
   select(Location, sample_location, `Sample Name`)
 # Should be null!!
+# Samples 24-w14, 46-w14, and 73-w0 are know to be faulty
 
 ## UPA ####
 duplic <- group_by(bd_upa, BarCode) %>%
@@ -307,3 +315,108 @@ preplot %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.title.x = element_blank()) +
   ylab("AU (mean\u00B1SEM)")
+
+
+
+## Compare against controls ####
+l <- vector("list", length = 4*2*2*2)
+i <- 1
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (study in c("UPA", "TNF")) {
+      for (rem in c("w0", "w14 non-remiters")){
+        d <- filter(dff,
+                    Target == gene,
+                    Location == site,
+                    Study %in% c(study, "C"),
+                    remission %in% c(rem, "C"))
+        l[[i]] <- tidy(wilcox.test(AU ~ remission, data = d)) %>%
+          mutate(Study = study,
+                 Location = site,
+                 Target = gene,
+                 remission = rem)
+
+        i <- i +1
+      }
+
+    }
+  }
+}
+
+# Corregir fdr per numero de Targets (genes)
+vsC <- do.call(rbind, l) %>%
+  group_by(Target) %>%
+  nest() %>%
+  mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  arrange(Location, Target, remission, -p.value) %>%
+  select(Location, Target, remission, Study, p.value, fdr, method, alternative)
+
+write_xlsx(vsC, "processed/compare_with_controls.xlsx")
+
+## Compare between studies ####
+l <- vector("list", length = 4*2*2)
+i <- 1
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (rem in c("w0", "w14 remiters")){
+      d <- filter(dff,
+                  Target == gene,
+                  Location == site,
+                  remission == rem,
+                  Study != "C")
+      l[[i]] <- tidy(wilcox.test(AU ~ Study, data = d)) %>%
+        mutate(Location = site,
+               Target = gene,
+               remission = rem)
+
+      i <- i +1
+    }
+
+  }
+}
+
+# Corregir fdr per numero de Targets (genes)
+between_studies <- do.call(rbind, l) %>%
+  group_by(Target) %>%
+  nest() %>%
+  mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(Location, Target, remission, p.value, fdr, method, alternative) %>%
+  arrange(Location, Target, remission, -p.value)
+write_xlsx(between_studies, "processed/compare_between_studies.xlsx")
+
+
+
+## Compare whitin studies ####
+l <- vector("list", length = 4*2*2)
+i <- 1
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (study in c("UPA", "TNF")){
+      d <- filter(dff,
+                  Target == gene,
+                  Location == site,
+                  remission  %in% c("w0", "w14 remiters"),
+                  Study == study)
+      l[[i]] <- tidy(wilcox.test(AU ~ remission, data = d)) %>%
+        mutate(Location = site,
+               Target = gene,
+               Study = study)
+
+      i <- i +1
+    }
+
+  }
+}
+
+# Corregir fdr per numero de Targets (genes)
+within_studies <- do.call(rbind, l) %>%
+  group_by(Target) %>%
+  nest() %>%
+  mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(Location, Target, Study, p.value, fdr, method, alternative) %>%
+  arrange(Location, Target, Study, -p.value)
+write_xlsx(between_studies, "processed/compare_whitin_studies.xlsx")
+
