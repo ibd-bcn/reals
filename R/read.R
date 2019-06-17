@@ -13,7 +13,7 @@ library("ggforce")
 library("ggrepel")
 
 bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
-bd_upa <- read_xls("data/M13-740_abbvie_database_210918_ulcers yes no.xls")
+bd_upa <- read_xls("data/M13-740_abbvie_database_300519.xls")
 reals <- read_xls("data/SOX6 CHI3L1 PDGFD PTGDR2_20190516_115511_Results_Export.xls",
                   skip = 15, na = c("", "Undetermined"))
 reals2 <- read_xls("data/THY HTR3E RETNLB COL3A1_20190524_165141_Results_Export.xls",
