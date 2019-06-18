@@ -20,6 +20,8 @@ reals2 <- read_xls("data/THY HTR3E RETNLB COL3A1_20190524_165141_Results_Export.
                    skip = 15, na = c("", "Undetermined"))
 reals3 <- read_xls("data/TBX21 IL17A IFN GZMH_20190531_125712_Results_Export.xls",
                    skip = 15, na = c("", "Undetermined"))
+reals4 <- read_xls("data/AQP7 DERL OSM S100A8_20190618_105927_Results_Export.xls",
+                   skip = 15, na = c("", "Undetermined"))
 upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx")
 control_codes <- read_xlsx("data/RT CONTROLS 500NG 20 UL.xlsx")
 antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xlsx")
@@ -27,6 +29,7 @@ antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xl
 # Clean the original data ####
 reals <- merge(reals, reals2, all = TRUE)
 reals <- merge(reals, reals3, all = TRUE)
+reals <- merge(reals, reals4, all = TRUE)
 
 # Correct ids or remove duplicated samples ####
 # Do you remember some samples that were in more than one sample?
@@ -79,7 +82,7 @@ n <- well_failed %>%
   group_by(failed) %>%
   count() %>%
   filter(failed == 3)
-stopifnot(nrow(n) != 0)
+stopifnot(nrow(n) == 0)
 
 wrong_genes <- well_failed %>%
   filter(failed == 2) %>%
@@ -226,9 +229,9 @@ controls %>%
 # Clean the "databases" ####
 bd2 <- bd %>%
   select(Sample_id, CD_endoscopic_remission, CD_endoscopic_response, IBD,
-         sample_location) %>%
+         sample_location, Ulcers) %>%
   mutate(Sample_id = tolower(Sample_id)) %>%
-  filter(str_detect(Sample_id, "-w")) %>%
+  filter(str_detect(Sample_id, "-w"), IBD == "CD") %>%
   mutate(Sample_id = gsub(" reseq|rep", "", Sample_id),
          Pacient_id = as.character(as.numeric(gsub("-w.*", "", Sample_id))),
          Time = str_extract(Sample_id, "w[0-9]*"),
@@ -243,8 +246,12 @@ upa_codes <- filter(upa_codes, !is.na(`PLACA MICRONIC`))
 df <- merge(bd2, antiTNF, all.x = FALSE, all.y = TRUE) %>%
   mutate(remission = case_when(
     Time == "w0" ~ "w0",
-    Time == "w14" & CD_endoscopic_remission == "yes" ~ "w14 remiters",
-    Time == "w14" & CD_endoscopic_remission == "no" ~ "w14 non-remiters"))
+    Time == "w14" & Ulcers == "yes" ~ "w14 non-remiters",
+    Time == "w14" & Ulcers == "no" ~ "w14 remiters"),
+    remission_old = case_when(
+      Time == "w0" ~ "w0",
+      Time == "w14" & CD_endoscopic_remission == "yes" ~ "w14 remiters",
+      Time == "w14" & CD_endoscopic_remission == "no" ~ "w14 non-remiters"))
 
 # Some errors when writting the name on the reals!
 filter(df, Location != sample_location) %>%
@@ -253,7 +260,7 @@ filter(df, Location != sample_location) %>%
   distinct(Sample_id) %>%
   pull(Sample_id)
 # Should be null!!
-# Samples 24-w14, 46-w14, and 73-w0 are know to be faulty: 156-w14
+# Samples 24-w14, 46-w14, and 73-w0 are know to be faulty: 156-w14, 19-w14
 
 ## UPA ####
 duplic <- group_by(bd_upa, BarCode) %>%
@@ -373,7 +380,7 @@ g <- vsC %>% group_by(Location, remission, Study) %>%
   ungroup() %>%
   distinct(`n`) %>%
   pull()
-stopifnot(g == 12)
+stopifnot(g == 16)
 write_xlsx(vsC, "processed/compare_with_controls.xlsx")
 
 ## Compare between studies ####
@@ -463,7 +470,7 @@ preplot <- dff %>%
   mutate(ymax = meanAU + sem, ymin = meanAU - sem)
 
 
-# Calculate the lin between the studies (problems when they cross??)
+# Calculate the line between the studies
 d <- preplot %>%
   filter(Study != "C", !grepl("non-remiters", remission)) %>%
   group_by(Target, remission, Location) %>%
@@ -489,19 +496,23 @@ db <- preplot %>%
   filter(fdr < 0.05)
 
 preplot %>%
-  filter(Study != "C") %>%
+  filter(Study != "C", Target %in% c("AQP7", "DERL3", "OSM", "S100A8")) %>%
   ggplot(aes(remission, meanAU)) +
   geom_point(aes(col = Study, group = Study)) +
   expand_limits(y = 0) +
   geom_errorbar(aes(col = Study, group = Study, ymin = ymin, ymax = ymax), width = 0.2) +
   geom_line(aes(col = Study, group = Study)) +
-  geom_hline(data = filter(preplot, Study == "C"),
+  geom_hline(data = filter(preplot, Study == "C",
+                           Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
              aes(yintercept = ymin), linetype = "dotted") +
   geom_hline(data = filter(preplot, Study == "C"),
              aes(yintercept = ymax), linetype = "dotted") +
-  geom_segment(data = dw, aes(x = remission, y = orig, xend = remission, yend = final)) +
-  geom_text(data = dw, aes(x = remission, y = center), label = "\t*", size = 5) + # Dirty trick to dodge the symbol
-  geom_text(data = db, aes(x = remission, y = meanAU), label = "\t+", size = 3) + # Dirty trick to dodge the symbol
+  geom_segment(data = filter(dw,  Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
+               aes(x = remission, y = orig, xend = remission, yend = final)) +
+  geom_text(data = filter(dw,  Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
+            aes(x = remission, y = center), label = "\t*", size = 5) + # Dirty trick to dodge the symbol
+  geom_text(data = filter(db,  Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
+            aes(x = remission, y = meanAU), label = "\t+", size = 3) + # Dirty trick to dodge the symbol
   facet_wrap(Target ~ Location, scales = "free_y", ncol = 4) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
