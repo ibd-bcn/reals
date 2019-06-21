@@ -674,16 +674,32 @@ preplot %>%
   ylab("AU (mean\u00B1SEM)")
 
 
+# tests ####
+within_studies_baseline <- dff %>%
+  filter(Study != "C", Time == "w0") %>%
+  group_by(General_location, Target, Study) %>%
+  nest(AU, remission) %>%
+  mutate(model = map(data, ~ tidy(wilcox.test(AU ~ remission, data = .)))) %>%
+  unnest(model) %>%
+  group_by(Study, General_location) %>%
+  nest(.key = "data3") %>%
+  mutate(map(data3, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(General_location, Target, Study, p.value, fdr, method, alternative) %>%
+  arrange(General_location, Target, Study, desc(p.value))
 
+write_xlsx(within_studies_baseline, "processed/within_studies_baselines.xlsx")
 
-l <- dff %>%
-  group_by(Target) %>%
-  nest(General_location, AU, Time, Study, remission, .key = Loc) %>%
-  mutate(model = map(Loc, function(x) {
-    x %>%
-      filter(Time == "w0", Study != "C") %>%
-      select(-Time, -Study) %>%
-      wilcox.test(AU ~ AU, data = .) %>%
-      tidy()
-  })
-  )
+within_studies_time <- dff %>%
+  filter(Study != "C") %>%
+  group_by(General_location, Target, Study, remission) %>%
+  nest(AU, Time) %>%
+  mutate(model = map(data, ~ tidy(wilcox.test(AU ~ Time, data = .)))) %>%
+  unnest(model) %>%
+  group_by(Study, General_location) %>%
+  nest(.key = "data3") %>%
+  mutate(map(data3, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(General_location, remission, Target, Study, p.value, fdr, method, alternative) %>%
+  arrange(General_location, remission, Target, Study, desc(p.value))
+write_xlsx(within_studies_time, "processed/within_studies_time.xlsx")
