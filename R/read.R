@@ -13,7 +13,7 @@ library("ggforce")
 library("ggrepel")
 
 bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
-bd_upa <- read_xls("data/M13-740_abbvie_database_300519.xls")
+bd_upa <- read_xls("data/M13-740_abbvie_database_300519.xls", na = c("n.a.", "NA"))
 reals <- read_xls("data/SOX6 CHI3L1 PDGFD PTGDR2_20190516_115511_Results_Export.xls",
                   skip = 15, na = c("", "Undetermined"))
 reals2 <- read_xls("data/THY HTR3E RETNLB COL3A1_20190524_165141_Results_Export.xls",
@@ -25,6 +25,10 @@ reals4 <- read_xls("data/AQP7 DERL OSM S100A8_20190618_105927_Results_Export.xls
 upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx")
 control_codes <- read_xlsx("data/RT CONTROLS 500NG 20 UL.xlsx")
 antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xlsx")
+w0_remitters_upa <- read_xlsx("processed/missing_response based on ulcers UPA.xlsx") %>%
+  mutate(remitter = tolower(remitter)) %>%
+  rename(Biopsy_Location = "Biopsy_Location week 0") %>%
+  select(Patient, remitter, Biopsy_Location)
 
 # Clean the original data ####
 reals <- merge(reals, reals2, all = TRUE)
@@ -42,16 +46,16 @@ reals[reals$`Experiment Name` == "290419 bcn samples plat 3.eds" &
 
 reals$`Sample Name`[grep("UP11 ", reals$`Sample Name`)] <- "UP11 AB4216302"
 reals$`Sample Name`[grep("UP52 ", reals$`Sample Name`)] <- "UP52 Y46412103"
-reals$`Sample Name`[grepl("42W", reals$`Sample Name`, ignore.case = TRUE)] <- "48C 52w14c"
+reals$`Sample Name`[grepl("^48C 42W", reals$`Sample Name`, ignore.case = TRUE)] <- "48C 52w14c"
 
-
+# Y45570803 is duplicated! but it should according to what we know of the samples...
 
 under_expressed <- function(x, target, s, value) {
-  keep <- grepl(s, reals$`Sample Name`)
-  reals$Cт[reals$`Target Name` == target & keep] <- value
-  m <- mean(reals$Cт[reals$`Target Name` == "BETA ACTINA" & keep])
-  reals$`Cт Mean`[reals$`Target Name` == target & keep] <- value-m
-  reals
+  keep <- grepl(s, x$`Sample Name`)
+  x$Cт[x$`Target Name` == target & keep] <- value
+  m <- mean(x$Cт[x$`Target Name` == "BETA ACTINA" & keep])
+  x$`Cт Mean`[x$`Target Name` == target & keep] <- value-m
+  x
 }
 
 bigger_ct <- 45
@@ -141,10 +145,6 @@ if (nrow(erroneous) > 1) {
 
 write.csv(reals, "processed/reals.csv", row.names = FALSE)
 
-reals %>%
-  group_by(`Sample Name`, `Target Name`) %>%
-  summarise("Ct_mean" = mean(`Cт`))
-
 # Check the results ####
 multiple_exp <- reals %>%
   group_by(`Sample Name`) %>%
@@ -167,23 +167,20 @@ antiTNF <- preclean %>%
   mutate(`Sample Name` = tolower(`Sample Name`),
          Pacient_id = as.character(as.numeric(gsub("w.*", "", `Sample Name`))),
          Time = str_extract(`Sample Name`, "w[0-9]*"),
-         Location = case_when(grepl("i$", `Sample Name`) ~ "ileum",
-                              grepl("c$", `Sample Name`) ~ "colon"),
          Sample_id = paste0(Pacient_id, "-", Time),
          AU = 2^(-`ΔCт`)*1000) %>%
   select(-`ΔCт`)
 
-# looking at the table
-antiTNF$Location[antiTNF$`Sample Name` == "04w14"] <- "colon"
-
 # To verify
-antiTNF %>%
+incorrect <- antiTNF %>%
   group_by(Id, `Sample Name`) %>%
   count() %>%
   ungroup() %>%
+  filter(!is.na(Id)) %>%  # Exclude some missing with NAs
   group_by(`Sample Name`) %>%
   count() %>%
   filter(n != 1)
+stopifnot(nrow(incorrect) == 0)
 
 UPA <- preclean %>%
   filter(grepl("^UP", `Sample Name`)) %>%
@@ -202,10 +199,13 @@ incorrect <- UPA %>%
   filter(n != 1) %>%
   pull(Id)
 # Should be 0 or null
+if (length(incorrect) != 0){
+  filter(upa_codes, `RT TUBE` %in% incorrect) %>%
+    mutate(sample = paste(`RT TUBE`, `nº muestra`)) %>%
+    pull(sample)
+}
 stopifnot(length(incorrect) == 0)
-filter(upa_codes, `RT TUBE` %in% incorrect) %>%
-  mutate(sample = paste(`RT TUBE`, `nº muestra`)) %>%
-  pull(sample)
+
 
 controls <- preclean %>%
   mutate(`Sample Name` = gsub(" CONT", "CONT", `Sample Name`)) %>%
@@ -222,45 +222,58 @@ controls %>%
   group_by(Id, `Sample Name`) %>%
   count() %>%
   ungroup() %>%
+  filter(!is.na(Id)) %>%
   group_by(Id) %>%
   count() %>%
   filter(n != 1)
+# 0
 
 # Clean the "databases" ####
 bd2 <- bd %>%
-  select(Sample_id, CD_endoscopic_remission, CD_endoscopic_response, IBD,
-         sample_location, Ulcers) %>%
   mutate(Sample_id = tolower(Sample_id)) %>%
   filter(str_detect(Sample_id, "-w"), IBD == "CD") %>%
+  select(Sample_id, CD_endoscopic_remission, CD_endoscopic_response,
+         sample_location, Ulcers, biopsied_segment) %>%
   mutate(Sample_id = gsub(" reseq|rep", "", Sample_id),
          Pacient_id = as.character(as.numeric(gsub("-w.*", "", Sample_id))),
          Time = str_extract(Sample_id, "w[0-9]*"),
          Sample_id = paste0(Pacient_id, "-", Time)) %>%
-  filter(Time %in% c("w0", "w14"))
+  filter(Time %in% c("w0", "w14")) %>%
+  distinct() %>%
+  rename(Location = sample_location)
 
 upa_codes <- filter(upa_codes, !is.na(`PLACA MICRONIC`))
 
 # Merge them together ####
 
 ## antiTNF ####
-df <- merge(bd2, antiTNF, all.x = FALSE, all.y = TRUE) %>%
-  mutate(remission = case_when(
-    Time == "w0" ~ "w0",
-    Time == "w14" & Ulcers == "yes" ~ "w14 non-remiters",
-    Time == "w14" & Ulcers == "no" ~ "w14 remiters"),
-    remission_old = case_when(
-      Time == "w0" ~ "w0",
-      Time == "w14" & CD_endoscopic_remission == "yes" ~ "w14 remiters",
-      Time == "w14" & CD_endoscopic_remission == "no" ~ "w14 non-remiters"))
 
-# Some errors when writting the name on the reals!
-filter(df, Location != sample_location) %>%
-  group_by(Sample_id) %>%
-  select(Location, sample_location, `Sample Name`) %>%
-  distinct(Sample_id) %>%
-  pull(Sample_id)
-# Should be null!!
-# Samples 24-w14, 46-w14, and 73-w0 are know to be faulty: 156-w14, 19-w14
+
+remission <- function(x) {
+  if (any(x$Time == "w14")) {
+    x <- unique(x)
+    if (x$Ulcers[x$Time == "w14"] == "yes") {
+      return("no")
+    } else {
+      return("yes")
+    }
+  } else {
+    return("missing")
+  }
+}
+
+df <- merge(bd2, antiTNF, all.x = FALSE, all.y = TRUE,
+            by = c("Sample_id", "Pacient_id", "Time")) %>%
+  filter(!(Time == "w0" & Ulcers == "no"))
+
+response <- df %>%
+  group_by(Pacient_id, biopsied_segment) %>%
+  nest(Ulcers, Time, .key = "AnyUlcers") %>%
+  mutate(remission = map(AnyUlcers, remission)) %>%
+  unnest(remission, .drop = TRUE)
+
+response$remission[response$remission == "missing"] <- "no"
+df <- inner_join(df, response)
 
 ## UPA ####
 duplic <- group_by(bd_upa, BarCode) %>%
@@ -268,41 +281,77 @@ duplic <- group_by(bd_upa, BarCode) %>%
   filter(BarCodes != 1) %>%
   pull(BarCode)
 # Because we have duplicates we remove some data (first filtering for what do we care
-bd_upa <- distinct(select(bd_upa, Week, pSES.CD, BarCode, ContainerName,
-                          SubjectID, ulcers))
+bd_upa <- bd_upa %>%
+  select(Week, pSES.CD, BarCode, ContainerName, SubjectID, ulcers, Biopsy_Location) %>%
+  distinct()
+# If we rerun the code above we won't see any sample
 
-df_upa <- merge(UPA, upa_codes,  by.x = "Id", by.y = "RT TUBE")
-stopifnot(nrow(df_upa) == nrow(UPA))
-# right_join(bd_upa, df_upa  by = c("BarCode" = "nº muestra")
-df_upa <- right_join(bd_upa, df_upa,
-                     by = c("BarCode" = "nº muestra")) %>%
+df_upa <- merge(UPA, upa_codes,  by.x = "Id", by.y = "RT TUBE",
+                all.x = TRUE, all.y = FALSE) %>%
+  left_join(bd_upa, by = c("nº muestra" = "BarCode")) %>%
   mutate(ContainerName = gsub("Biopsy ", "", ContainerName),
          Location = ContainerName,
          Week = paste0("w", Week),
          pSES.CD = as.numeric(pSES.CD),
-         remission = case_when(
-           Week == "w0" & ulcers == "yes" ~ "w0",
-           Week != "w0" & ulcers == "no"~ "w14 remiters",
-           Week != "w0" & ulcers == "yes" ~ "w14 non-remiters",
-           TRUE ~ Week),
          remission_old = case_when(
            Week == "w0" ~ "w0",
            Week != "w0" & pSES.CD < 5 ~ "w14 remiters",
            Week != "w0" & pSES.CD >= 5 ~ "w14 non-remiters",
-           TRUE ~ Week)) %>%
-  filter(!(Week == "w0" & ulcers == "no"))
-# stopifnot(nrow(df_upa) == nrow(UPA))
+           TRUE ~ Week),
+         SubjectID = as.character(SubjectID)) %>%
+  filter(!(Week == "w0" & ulcers == "no")) %>%
+  rename(Ulcers = ulcers, Time = Week)
+
+response <- df_upa %>%
+  group_by(SubjectID, Biopsy_Location) %>%
+  nest(Ulcers, Time, .key = "AnyUlcers") %>%
+  mutate(remission = map(AnyUlcers, remission), SubjectID = as.character(SubjectID)) %>%
+  unnest(remission, .drop = TRUE)
+
+response_all <- merge(response, w0_remitters_upa,
+                      by.x = c("SubjectID", "Biopsy_Location"),
+                      by.y = c("Patient", "Biopsy_Location"),
+                      all.x = TRUE, all.y = FALSE) %>%
+  mutate(remission = if_else(remission == "missing", remitter, remission)) %>%
+  select(-remitter)
+
+
+mi <- response_all %>%
+  filter(is.na(Biopsy_Location)) %>%
+  pull(SubjectID) %>%
+  unique()
+
+filter(bd_upa, SubjectID %in% mi_loc, Week < 50) %>%
+  arrange(SubjectID, Biopsy_Location, Week) %>%
+  select(SubjectID, Biopsy_Location, Week, ContainerName, ulcers, BarCode,
+         pSES.CD) %>%
+  group_by(SubjectID, Biopsy_Location) %>%
+  filter(n_distinct(Week) == 1) %>%
+  ungroup()
+# Not required as in week 0 it doesn't have ulcers
+
+filter(df_upa, is.na(Biopsy_Location)) %>%
+  select(Biopsy_Location, SubjectID, Location) %>%
+  distinct()
+
+df_upa <- df_upa %>%
+  left_join(distinct(response_all)) %>%
+  mutate(remission = if_else(is.na(remission), "yes", remission),
+         Time = if_else(Time == "w52", "w14", Time)) %>%
+  distinct()
+
 
 coln <- c("Sample", "Patient", "Time", "remission", "Target", "AU", "Location")
 antiTNF_df <- select(df, Sample_id, Pacient_id, Time, remission,
-                     "Target Name", AU, sample_location)
+                     "Target Name", AU, biopsied_segment)
 colnames(antiTNF_df) <- coln
-upa_df <- select(df_upa, BarCode, SubjectID, Week, remission,
-                 "Target Name", AU, Location)
+upa_df <- select(df_upa, Pacient_id, SubjectID, Time, remission,
+                 "Target Name", AU, Biopsy_Location)
 colnames(upa_df) <- coln
 
 controls$Time <- "C"
-controls$Remission <- "C"
+controls$Remission <- "yes"
+controls$ulcers <- NA
 controls_df <- controls[, c("Sample Name", "Patient_id", "Time",
                             "Remission", "Target Name", "AU", "Location")]
 colnames(controls_df) <- coln
@@ -310,7 +359,14 @@ colnames(controls_df) <- coln
 dff <- rbind(cbind(upa_df, "Study" = "UPA"),
              cbind(antiTNF_df, "Study" = "TNF"),
              cbind(controls_df, "Study" = "C")) %>%
-  mutate(Location = tolower(Location))
+  mutate(Location = tolower(Location)) %>%
+  filter(remission != "not interesting") %>%
+  # Remove a sample of a gene because there was some problem with the control
+  filter(!(Target == "OSM" & Patient == "48" & Study == "TNF" &
+             Location == "ileum" & Time == "w14")) %>%
+  mutate(General_location = if_else(Location == "ileum" & !is.na(Location),
+                                    "ileum", "colon")) %>%
+  distinct()
 
 # Strange values
 sam <- filter(dff, Study == "UPA",
@@ -318,7 +374,6 @@ sam <- filter(dff, Study == "UPA",
               Target == "SOX6",
               Location == "colon") %>%
   pull("Sample")
-
 
 stopifnot(nrow(filter(dff, is.na(remission))) == 0)
 
@@ -339,6 +394,7 @@ write_xlsx(arrange(b, desc(`Sample Name`), desc(`Target Name`)),
            "processed/undetected_samples.xlsx")
 write_xlsx(as.data.frame(a[, 3:7]),
            "processed/anormal_high_markers_colon.xlsx")
+# Excluding the samples that at w0 didn't have ulcers!!
 write_xlsx(dff, "processed/AU_markers.xlsx")
 
 ## Compare against controls ####
@@ -347,12 +403,12 @@ i <- 1
 for (gene in unique(dff$Target)) {
   for (site in unique(dff$Location)) {
     for (study in c("UPA", "TNF")) {
-      for (rem in c("w0", "w14 non-remiters")){
+      for (rem in c("yes", "no")){
         d <- filter(dff,
                     Target == gene,
                     Location == site,
                     Study %in% c(study, "C"),
-                    remission %in% c(rem, "C"))
+                    remission %in% c(rem, "yes"))
         l[[i]] <- tidy(wilcox.test(AU ~ remission, data = d)) %>%
           mutate(Study = study,
                  Location = site,
@@ -454,15 +510,6 @@ write_xlsx(within_studies, "processed/compare_whitin_studies.xlsx")
 # Plots ####
 
 today <- format(Sys.time(), "%Y%m%d")
-my_comparisons <- list(c("C C", "w0 TNF"),
-                       c("C C", "w0 UPA"),
-                       c("w0 UPA", "w0 TNF"),
-                       c("w14 remiters UPA", "w0 UPA"),
-                       c("w14 remiters TNF", "w0 TNF"))
-
-aTNF = "#a8ddb5"
-aUPA = "#43a2ca"
-cols = c("C" = "grey", "TNF" = aTNF, "UPA" = aUPA)
 
 preplot <- dff %>%
   group_by(remission, Target, Location, Study) %>%
@@ -474,10 +521,12 @@ preplot <- dff %>%
 d <- preplot %>%
   filter(Study != "C", !grepl("non-remiters", remission)) %>%
   group_by(Target, remission, Location) %>%
-  mutate(distU = (max(ymin) - min(ymax))/2,
-         orig = max(ymin) - distU/10, # Make them not overlap witht the error bars.
-         final = min(ymax) + distU/10,
-         center = distU + final)
+  mutate(
+    d = max(meanAU) - min(meanAU),
+    distU = (max(ymin) - min(ymax))/2,
+    orig = max(ymin) - distU/10, # Make them not overlap witht the error bars.
+    final = min(ymax) + distU/10,
+    center = distU + final)
 
 # Keep just one every two lines
 empty <- seq(from = 1, to = nrow(d), by = 2)
@@ -495,6 +544,110 @@ db <- preplot %>%
   unique() %>%
   filter(fdr < 0.05)
 
+
+
+### W0 ####
+
+# Compare studies by gene at w0 indepdendently of remission
+
+preplot <- dff %>%
+  group_by(Target, Study, remission, Time, General_location) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
+  mutate(ymax = meanAU + sem, ymin = meanAU - sem,
+         label = paste(Study, `remission`))
+
+loc <- "colon"
+
+pd <- position_dodge2(width = 0.5)
+preplot %>%
+  filter(Study != "C", Time == "w0", General_location == loc) %>%
+  ggplot(aes(Study, meanAU)) +
+  geom_point(aes(col = Study, group = Study, shape = remission),
+             position = pd) +
+  geom_errorbar(aes(col = Study, ymin = ymin, ymax = ymax), width = 0.2,
+                position = pd)  +
+  facet_wrap(~Target, scales = "free_y") +
+  geom_hline(data = filter(preplot, Study == "C", General_location == loc),
+             aes(yintercept = ymin), linetype = "dotted") +
+  geom_hline(data = filter(preplot, Study == "C", General_location == loc),
+             aes(yintercept = ymax), linetype = "dotted") +
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(fill = NA, colour = "black")) +
+  labs(x = element_blank(), title = paste("Basal expression:", loc),
+       subtitle = "Comparison between UPA and TNF")
+
+preplot <- dff %>%
+  group_by(Target, Study, General_location, remission, Time) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
+  mutate(ymax = meanAU + sem, ymin = meanAU - sem)
+
+st <- "UPA"
+
+preplot %>%
+  filter(Study != "C", General_location == loc, Study == st) %>%
+  mutate(label = paste(Study, remission)) %>%
+  ggplot(aes(Time, meanAU)) +
+  # geom_point(aes(col = Study, shape = remission), position = pd) +
+  geom_pointrange(aes(col = Study, ymin = ymin, ymax = ymax, shape = remission), position = pd) +
+  geom_line(aes(group = label, col = Study), position = pd) +
+  facet_wrap(~Target, scales = "free_y", ncol = 4) +
+  geom_hline(data = filter(preplot, Study == "C", General_location == loc),
+             aes(yintercept = ymin), linetype = "dotted") +
+  geom_hline(data = filter(preplot, Study == "C", General_location == loc),
+             aes(yintercept = ymax), linetype = "dotted") +
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(fill = NA, colour = "black")) +
+  labs(x = element_blank(), title = "Expression of marker genes",
+       subtitle = paste(loc, "at baseline and at week 14"))
+
+
+## Other things ####
+
+
+
+out <- dff %>%
+  filter(Study != "C") %>%
+  select(-Target, -AU) %>%
+  distinct(.keep_all = TRUE) %>%
+  group_by(Patient, Location, Study) %>%
+  summarise(Times = n_distinct(Time)) %>%
+  filter(Times != 2) %>%
+  pull("Patient")
+  # group_by(n) %>%
+  # count()
+
+out2 <- dff %>%
+  filter(Patient %in% out,
+         Time == "w0") %>%
+  filter(Study != "C") %>%
+  select(-Target, -AU) %>%
+  distinct(.keep_all = TRUE) %>%
+  select(Sample, Patient, Study, Location) %>%
+  arrange(Study, Patient, Sample, Location)
+out2 %>%
+  write_xlsx("processed/missing_response.xlsx")
+
+df_upa %>%
+  mutate(SubjectID = as.character(SubjectID), Location = tolower(Location)) %>%
+  inner_join(out2, by = c("SubjectID" = "Patient", "Location" = "Location")) %>%
+  select(SubjectID, pSES.CD, Location, Biopsy_Location, Week) %>%
+  distinct() %>%
+  arrange(desc(SubjectID), Week) %>%
+  write_xlsx("processed/missing_response_upa.xlsx")
+
+
+a <- bd %>%
+  distinct(Pacient_id, week, biopsied_segment, Ulcers) %>%
+  filter(!(week == "0" & Ulcers == "no")) %>%
+  group_by(Pacient_id, biopsied_segment) %>%
+  nest(Ulcers, week, .key = "AnyUlcers") %>%
+  mutate(remission = map(AnyUlcers, adf))
+
+
+
+
 preplot %>%
   filter(Study != "C", Target %in% c("AQP7", "DERL3", "OSM", "S100A8")) %>%
   ggplot(aes(remission, meanAU)) +
@@ -505,7 +658,7 @@ preplot %>%
   geom_hline(data = filter(preplot, Study == "C",
                            Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
              aes(yintercept = ymin), linetype = "dotted") +
-  geom_hline(data = filter(preplot, Study == "C"),
+  geom_hline(data = filter(preplot, Study == "C", Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
              aes(yintercept = ymax), linetype = "dotted") +
   geom_segment(data = filter(dw,  Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
                aes(x = remission, y = orig, xend = remission, yend = final)) +
@@ -514,9 +667,23 @@ preplot %>%
   geom_text(data = filter(db,  Target %in% c("AQP7", "DERL3", "OSM", "S100A8")),
             aes(x = remission, y = meanAU), label = "\t+", size = 3) + # Dirty trick to dodge the symbol
   facet_wrap(Target ~ Location, scales = "free_y", ncol = 4) +
-  theme_bw() +
+  theme_classic() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.title.x = element_blank()) +
   geom_segment(aes(xend = remission, yend = meanAU, group = remission)) +
   ylab("AU (mean\u00B1SEM)")
 
+
+
+
+l <- dff %>%
+  group_by(Target) %>%
+  nest(General_location, AU, Time, Study, remission, .key = Loc) %>%
+  mutate(model = map(Loc, function(x) {
+    x %>%
+      filter(Time == "w0", Study != "C") %>%
+      select(-Time, -Study) %>%
+      wilcox.test(AU ~ AU, data = .) %>%
+      tidy()
+  })
+  )
