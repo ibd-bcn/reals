@@ -5,18 +5,15 @@ library("stringr")
 library("lubridate")
 
 # Read tables
-reals <- read.csv("processed/reals.csv", check.names = FALSE)
+reals <- read_xlsx("processed/AU_markers.xlsx")
 bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
 
 # Extract the ids of the samples of the reals for the antiTNF
 names_patients <- reals %>%
-  filter(grepl("[0-9]W",`Sample Name`, ignore.case = TRUE)) %>%
-  distinct(`Sample Name`) %>%
-  pull(`Sample Name`) %>%
-  tolower() %>%
-  str_split("w") %>%
-  sapply(getElement, name = 1) %>%
-  unique()
+  filter(Study == "TNF") %>%
+  pull(Patient) %>%
+  unique() %>%
+  sort()
 
 access <- read_excel("data/20190522_consulta_BCN_bbddd_3.xlsx", na = c("N/A", "")) %>%
   mutate(Patient_id = as.character(as.numeric(`id Patient`))) %>%

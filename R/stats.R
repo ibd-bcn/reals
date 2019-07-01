@@ -11,7 +11,7 @@ library(Rmisc, quietly =T)
 library(gridExtra)
 library(grid)
 
-###26/06/2019
+### 26/06/2019
 # l'Azu em demana que faci l'analisi de les reals avui que en lluis no hi és (ell les ha fet
 # la resta de dies). De fet ell m'ha deixat uns arxius a la O:/ que ara copiaré per comoditat al
 # meu ordinador.
@@ -21,7 +21,7 @@ library(grid)
 ### 27/06/2019
 # L'Azu ha tret tres valors. Repeteixo analisis.
 
-###27/06/2019####
+### 27/06/2019####
 
 # Dades
 dades <- readxl::read_xlsx('processed/AU_markers.xlsx')
@@ -44,11 +44,14 @@ dades$Target <- as.factor(dades$Target)
 
 ### dades eliminades ####
 
-dades[dades$Target == 'OSM' & dades$Time == 'w0' & dades$General_location == 'ileum' & dades$AU > 71,'AU'] <- NA
-
-dades[dades$Target == 'OSM' & dades$Time == 'w0' & dades$General_location == 'colon' & dades$Study == 'TNF' & dades$AU >38,'AU'] <- NA
-
-dades[dades$Target == 'IL17A' & dades$Time == 'w0' & dades$General_location == 'colon' & dades$Study == 'UPA' & dades$AU > 16,'AU'] <- NA
+dades[dades$Target == 'OSM' & dades$Time == 'w0' &
+        dades$General_location == 'ileum' & dades$AU > 71,'AU'] <- NA
+dades[dades$Target == 'OSM' & dades$Time == 'w0' &
+        dades$General_location == 'colon' & dades$Study == 'TNF' &
+        dades$AU >38,'AU'] <- NA
+dades[dades$Target == 'IL17A' & dades$Time == 'w0' &
+        dades$General_location == 'colon' & dades$Study == 'UPA' &
+        dades$AU > 16,'AU'] <- NA
 
 dades[is.na(dades$AU),]
 #         Sample Patient Time remission Target AU   Location Study General_location  myvar mytime
@@ -548,3 +551,215 @@ for(i in levels(dades$Target)){
 
 }
 dev.off()
+
+
+
+
+
+## Compare against controls ####
+l <- vector("list", length =  length(unique(dff$Target))*2*2*2)
+i <- 1
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (study in c("UPA", "TNF")) {
+      for (rem in c("yes", "no")){
+        d <- filter(dff,
+                    Target == gene,
+                    Location == site,
+                    Study %in% c(study, "C"),
+                    remission %in% c(rem, "yes"))
+        l[[i]] <- tidy(wilcox.test(AU ~ remission, data = d)) %>%
+          mutate(Study = study,
+                 Location = site,
+                 Target = gene,
+                 remission = rem)
+
+        i <- i +1
+      }
+
+    }
+  }
+}
+
+# Corregir fdr per numero de Targets (genes)
+vsC <- do.call(rbind, l) %>%
+  group_by(Location, Study, remission) %>%
+  nest() %>%
+  mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  arrange(Location, Target, remission, -p.value) %>%
+  select(Location, Target, remission, Study, p.value, fdr, method, alternative)
+
+g <- vsC %>% group_by(Location, remission, Study) %>%
+  summarise(n = n_distinct(Target)) %>%
+  ungroup() %>%
+  distinct(`n`) %>%
+  pull()
+stopifnot(g == 16)
+write_xlsx(vsC, "processed/compare_with_controls.xlsx")
+
+## Compare between studies ####
+l <- vector("list", length =  length(unique(dff$Target))*2*2)
+i <- 1
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (rem in c("w0", "w14 remiters")){
+      d <- filter(dff,
+                  Target == gene,
+                  Location == site,
+                  remission == rem,
+                  Study != "C")
+      l[[i]] <- tidy(wilcox.test(AU ~ Study, data = d)) %>%
+        mutate(Location = site,
+               Target = gene,
+               remission = rem)
+
+      i <- i +1
+    }
+
+  }
+}
+
+# Corregir fdr per numero de Targets (genes)
+between_studies <- do.call(rbind, l) %>%
+  group_by(Location, remission) %>%
+  nest() %>%
+  mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(Location, Target, remission, p.value, fdr, method, alternative) %>%
+  arrange(Location, Target, remission, -p.value)
+
+write_xlsx(between_studies, "processed/compare_between_studies.xlsx")
+
+
+
+## Compare whitin studies ####
+l <- vector("list", length =  length(unique(dff$Target))*2*2)
+i <- 1
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (study in c("UPA", "TNF")){
+      d <- filter(dff,
+                  Target == gene,
+                  Location == site,
+                  remission  %in% c("w0", "w14 remiters"),
+                  Study == study)
+      l[[i]] <- tidy(wilcox.test(AU ~ remission, data = d)) %>%
+        mutate(Location = site,
+               Target = gene,
+               Study = study)
+
+      i <- i +1
+    }
+
+  }
+}
+
+# Corregir fdr per numero de Targets (genes)
+within_studies <- do.call(rbind, l) %>%
+  group_by(Study, Location) %>%
+  nest() %>%
+  mutate(map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(Location, Target, Study, p.value, fdr, method, alternative) %>%
+  arrange(Location, Target, Study, -p.value)
+
+write_xlsx(within_studies, "processed/compare_whitin_studies.xlsx")
+
+# Plots ####
+
+today <- format(Sys.time(), "%Y%m%d")
+
+preplot <- dff %>%
+  group_by(remission, Target, Location, Study) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
+  mutate(ymax = meanAU + sem, ymin = meanAU - sem)
+
+
+dw <- merge(between_studies, d) %>%
+  filter(fdr < 0.05)
+
+ws <- within_studies %>%
+  mutate(remission = "w14 remiters")
+
+db <- preplot %>%
+  filter(Study != "C", !grepl("non-remiters", remission)) %>%
+  merge(ws) %>%
+  unique() %>%
+  filter(fdr < 0.05)
+
+
+
+## Other things ####
+
+
+
+out <- dff %>%
+  filter(Study != "C") %>%
+  select(-Target, -AU) %>%
+  distinct(.keep_all = TRUE) %>%
+  group_by(Patient, Location, Study) %>%
+  summarise(Times = n_distinct(Time)) %>%
+  filter(Times != 2) %>%
+  pull("Patient")
+# group_by(n) %>%
+# count()
+
+out2 <- dff %>%
+  filter(Patient %in% out,
+         Time == "w0") %>%
+  filter(Study != "C") %>%
+  select(-Target, -AU) %>%
+  distinct(.keep_all = TRUE) %>%
+  select(Sample, Patient, Study, Location) %>%
+  arrange(Study, Patient, Sample, Location)
+
+out2 %>%
+  write_xlsx("processed/missing_response.xlsx")
+
+df_upa %>%
+  mutate(SubjectID = as.character(SubjectID), Location = tolower(Location)) %>%
+  inner_join(out2, by = c("SubjectID" = "Patient", "Location" = "Location")) %>%
+  select(SubjectID, pSES.CD, Location, Biopsy_Location, Week) %>%
+  distinct() %>%
+  arrange(desc(SubjectID), Week) %>%
+  write_xlsx("processed/missing_response_upa.xlsx")
+
+
+a <- bd %>%
+  distinct(Pacient_id, week, biopsied_segment, Ulcers) %>%
+  filter(!(week == "0" & Ulcers == "no")) %>%
+  group_by(Pacient_id, biopsied_segment) %>%
+  nest(Ulcers, week, .key = "AnyUlcers") %>%
+  mutate(remission = map(AnyUlcers, adf))
+
+
+# tests ####
+within_studies_baseline <- dff %>%
+  filter(Study != "C", Time == "w0") %>%
+  group_by(General_location, Target, Study) %>%
+  nest(AU, remission) %>%
+  mutate(model = map(data, ~ tidy(wilcox.test(AU ~ remission, data = .)))) %>%
+  unnest(model) %>%
+  group_by(Study, General_location) %>%
+  nest(.key = "data3") %>%
+  mutate(map(data3, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(General_location, Target, Study, p.value, fdr, method, alternative) %>%
+  arrange(General_location, Target, Study, desc(p.value))
+
+write_xlsx(within_studies_baseline, "processed/within_studies_baselines.xlsx")
+
+within_studies_time <- dff %>%
+  filter(Study != "C") %>%
+  group_by(General_location, Target, Study, remission) %>%
+  nest(AU, Time) %>%
+  mutate(model = map(data, ~ tidy(wilcox.test(AU ~ Time, data = .)))) %>%
+  unnest(model) %>%
+  group_by(Study, General_location) %>%
+  nest(.key = "data3") %>%
+  mutate(map(data3, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
+  unnest() %>%
+  select(General_location, remission, Target, Study, p.value, fdr, method, alternative) %>%
+  arrange(General_location, remission, Target, Study, desc(p.value))
+write_xlsx(within_studies_time, "processed/within_studies_time.xlsx")
