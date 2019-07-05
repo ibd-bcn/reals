@@ -22,6 +22,8 @@ reals3 <- read_xls("data/TBX21 IL17A IFN GZMH_20190531_125712_Results_Export.xls
                    skip = 15, na = c("", "Undetermined"))
 reals4 <- read_xls("data/AQP7 DERL OSM S100A8_20190618_105927_Results_Export.xls",
                    skip = 15, na = c("", "Undetermined"))
+reals5 <- read_xls("data/AQP8_20190704_165805_Results_Export.xls",
+                   skip = 0, na = c("", "Undetermined"))
 upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx")
 control_codes <- read_xlsx("data/RT CONTROLS 500NG 20 UL.xlsx")
 antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xlsx")
@@ -34,10 +36,13 @@ w0_remitters_upa <- read_xlsx("processed/missing_response based on ulcers UPA.xl
 reals <- merge(reals, reals2, all = TRUE)
 reals <- merge(reals, reals3, all = TRUE)
 reals <- merge(reals, reals4, all = TRUE)
+reals <- merge(reals, reals5, all = TRUE)
 
 # Correct ids or remove duplicated samples ####
 # Do you remember some samples that were in more than one sample?
 # Now we remove a plate
+reals[reals$`Sample Name` %in% c("102w14c", "73w14c")  &
+        grepl("290419bcn 102 a 108", reals$`Experiment Name`), 1:5]
 reals <- filter(reals,
                 !(`Sample Name` %in% c("102w14c", "73w14c")  & grepl("290419bcn 102 a 108", `Experiment Name`)))
 
@@ -50,23 +55,89 @@ reals$`Sample Name`[grepl("^48C 42W", reals$`Sample Name`, ignore.case = TRUE)] 
 
 # Y45570803 is duplicated! but it should according to what we know of the samples...
 
-under_expressed <- function(x, target, s, value) {
-  keep <- grepl(s, x$`Sample Name`)
-  x$Cт[x$`Target Name` == target & keep] <- value
-  m <- mean(x$Cт[x$`Target Name` == "BETA ACTINA" & keep])
-  x$`Cт Mean`[x$`Target Name` == target & keep] <- value-m
-  x
+# Look for the beta actina of the same well as the genes.
+nested_well <- reals %>%
+  filter(`Target Name` != "BETA ACTINA") %>%
+  group_by(`Experiment Name`, `Target Name`, `Sample Name`) %>%
+  nest(Well)
+
+nested_well$data <- lapply(wells, unlist)
+
+# Look for the wells how many have values
+xy <- vector("list", length = nrow(nested_well))
+for (i in seq_len(nrow(nested_well))) {
+  x <- nested_well[i, ]
+  wells_value <- reals %>%
+    filter(`Sample Name` == x[["Sample Name"]],
+           `Experiment Name` == x[["Experiment Name"]],
+           Well %in% x[["data"]][[1]]
+    )
+  xy[[i]] <- wells_value %>%
+    group_by(`Target Name`) %>%
+    summarise(nas = sum(is.na(`Cт`)))
+
 }
 
-bigger_ct <- 45
-reals <- reals %>%
-  under_expressed("RTNLB", "^UP112 ", bigger_ct) %>%
-  under_expressed("IL17A", "^19 CONT ", bigger_ct) %>%
-  under_expressed("RTNLB", "^UP84 ", bigger_ct) %>%
-  under_expressed("HTR3E", "^1C ", bigger_ct) %>%
-  under_expressed("HTR3E", "^39C ", bigger_ct) %>%
-  under_expressed("HTR3E", "^67C ", bigger_ct) %>%
-  under_expressed("HTR3E", "^UP103 ", bigger_ct)
+# Look how many missing values of Beta actina per target sample, experiment
+ba <- sapply(xy, function(x) {
+  x[x$`Target Name` == "BETA ACTINA", "nas", drop = TRUE]})
+table(ba)
+# Three samples that don't have right the BETA ACTINA
+# For genes AQP7, CHI3L1, IFN GAMMA
+
+# Look how many missing values of gene per target sample, experiment
+gene <- sapply(xy, function(x){
+  x[x$`Target Name` != "BETA ACTINA", "nas", drop = TRUE]})
+table(gene)
+# Three samples that don't have right the BETA ACTINA
+# For genes AQP7, CHI3L1, IFN GAMMA
+
+# Relations between genes and beta actina
+table(gene, ba)
+
+# Missing samples: Probably bad pipetting on the wet lab
+nested_well[gene == 3 & ba == 3, 1:3]
+
+
+reals %>%
+  filter(`Sample Name` %in% c("41C 41W14I", "C15 ILI", "UP3 AA5292203"),
+         `Experiment Name`  %in% c("040619 PLAT 4 BCN.eds",
+                                   "070519  bcn controls ili PLAT 1 sox6 chi pdgfd ptg2.eds",
+                                   "280519 UPA PLAT 1.eds"),
+         `Target Name` %in% c("AQP7", "CHI3L1", "IFN GAMMA", "BETA ACTINA")) %>%
+  arrange(`Experiment Name`, Well, `Sample Name`, `Target Name`) %>%
+  select(Well, `Sample Name`, `Target Name`, `Cт`)
+
+# Add values to those with beta actine but without gene values
+bigger_ct <- 40
+# Three missing values on the gene but values for beta actina
+cond <- gene == 3 & ba != 3
+df <- as.data.frame(nested_well[cond, 1:3])
+for (row in seq_len(nrow(df))) {
+  l <- reals$"Experiment Name" == df[row, "Experiment Name"] &
+    reals$"Target Name" == df[row, "Target Name"] &
+    reals$"Sample Name" == df[row, "Sample Name"]
+  reals[l, "Cт"] <- bigger_ct
+}
+
+# Verify that the samples with missing values have high values of the ones
+# they have
+cond <- gene == 2
+df <- as.data.frame(nested_well[cond, 1:3])
+o <- sapply(seq_len(nrow(df)), function(row) {
+  l <- reals$"Experiment Name" == df[row, "Experiment Name"] &
+    reals$"Target Name" == df[row, "Target Name"] &
+    reals$"Sample Name" == df[row, "Sample Name"]
+  ct <- reals[l, "Cт"]
+  c(mean = mean(ct, na.rm = TRUE),
+    max = max(ct, na.rm = TRUE))
+})
+o <- t(o)
+colnames(o) <- c("mean", "max")
+hist(o[, 2], xlab = "Max Ct",
+     main = c("Distribution of max Ct of the genes with missing values",
+     "\nBy genes having only 1 value."))
+
 
 # Check if some samples are in more than one plate ####
 multiple_exp <- reals %>%
@@ -105,14 +176,15 @@ failed_reference <- well_failed %>%
 
 stopifnot(nrow(failed_reference) == 0)
 
-failed_betas <- well_failed %>%
-  filter(failed == 1) %>%
-  inner_join(reals) %>%
-  filter(`Target Name` != "BETA ACTINA",
-         !is.na(`Cт`)) %>%
-  select(`Sample Name`, `Target Name`) %>%
-  distinct()
-stopifnot(nrow(failed_betas) == 0)
+#  Superseeded by gene and ba check above.
+# failed_betas <- well_failed %>%
+#   filter(failed == 1) %>%
+#   inner_join(reals) %>%
+#   filter(`Target Name` != "BETA ACTINA",
+#          !is.na(`Cт`)) %>%
+#   select(`Sample Name`, `Target Name`) %>%
+#   distinct()
+# stopifnot(nrow(failed_betas) == 0)
 
 # Analyse if the targets are right or wrong ####
 failed <- reals %>%
@@ -267,7 +339,7 @@ df <- merge(bd2, antiTNF, all.x = FALSE, all.y = TRUE,
 
 response <- df %>%
   group_by(Pacient_id, biopsied_segment) %>%
-  nest(Ulcers, Time, .key = "AnyUlcers") %>%
+  nest(Ulcers, Time, .key = AnyUlcers) %>%
   mutate(remission = map(AnyUlcers, remission)) %>%
   unnest(remission, .drop = TRUE)
 
@@ -320,13 +392,14 @@ mi <- response_all %>%
   pull(SubjectID) %>%
   unique()
 
-filter(bd_upa, SubjectID %in% mi_loc, Week < 50) %>%
-  arrange(SubjectID, Biopsy_Location, Week) %>%
-  select(SubjectID, Biopsy_Location, Week, ContainerName, ulcers, BarCode,
-         pSES.CD) %>%
-  group_by(SubjectID, Biopsy_Location) %>%
-  filter(n_distinct(Week) == 1) %>%
-  ungroup()
+# Don't know where mi_loc came from
+# filter(bd_upa, SubjectID %in% mi_loc, Week < 50) %>%
+#   arrange(SubjectID, Biopsy_Location, Week) %>%
+#   select(SubjectID, Biopsy_Location, Week, ContainerName, ulcers, BarCode,
+#          pSES.CD) %>%
+#   group_by(SubjectID, Biopsy_Location) %>%
+#   filter(n_distinct(Week) == 1) %>%
+#   ungroup()
 # Not required as in week 0 it doesn't have ulcers
 
 filter(df_upa, is.na(Biopsy_Location)) %>%
@@ -398,3 +471,66 @@ write_xlsx(as.data.frame(a[, 3:7]),
 
 # Excluding the samples that at w0 didn't have ulcers!!
 write_xlsx(dff, "processed/AU_markers.xlsx")
+
+
+# Looking if all genes have the same number of samples
+o <- dff %>%
+  mutate(group = if_else(Time == "w0", "w0", remission)) %>%
+  group_by(General_location, Target, Study, group) %>%
+  summarise(nSample = n_distinct(Sample)) %>%
+  arrange(General_location,  Target, Study, group) %>%
+  group_by(Study, group, General_location) %>%
+  summarise(n_distinct(nSample), min(nSample), max(nSample),
+            diff = max(nSample) - min(nSample))
+o
+# No they don't one group has even 4 different number of samples...
+table(o[, 4, drop = TRUE],
+      o[, "diff", drop = TRUE])
+# Most differences are of just 1 or in few instances
+
+dff %>%
+  mutate(group = if_else(Time == "w0", "w0", remission)) %>%
+  filter(Study == "UPA", group == "w0", General_location == "ileum") %>%
+  group_by(Target) %>%
+  count()
+
+# Some other things ####
+bd_upa2 <- bd_upa %>%
+  filter(BarCode %in% UPA$Pacient_id)
+
+
+tb <- table(bd_upa2$Week, bd_upa2$SubjectID, bd_upa2$Biopsy_Location)
+dmtb <- dimnames(tb)
+check_ulcers <- sapply(dmtb[[3]], function(x) {
+  s <- colSums(tb[, , x]) # See if they have samples for that location
+  tb[1, , x] == 0 & s != 0
+  })
+k <- apply(check_ulcers, 1, any)
+check_patients_upa <- names(k)[k]
+
+check_ulcers <- colnames(tb)[tb[1, ] == 0]
+  group_by(SubjectID) %>%
+  summarise(nt = n_distinct(Week)) %>%
+  group_by(nt) %>%
+  count()
+
+bd2b <- bd2 %>%
+  filter(Pacient_id %in% antiTNF$Pacient_id)
+
+
+tb <- table(bd2b$Time, bd2b$Pacient_id, bd2b$biopsied_segment)
+dmtb <- dimnames(tb)
+check_ulcers <- sapply(dmtb[[3]], function(x) {
+  s <- colSums(tb[, , x]) # See if they have samples for that location
+  tb[1, , x] == 0 & s != 0
+})
+k <- apply(check_ulcers, 1, any)
+check_ulcers_tnf <- names(k)[k]
+
+filter(bd, Pacient_id %in% check_ulcers_tnf) %>%
+  select(Sample_id, Ulcers, biopsied_segment)
+  # Patient 70 on w0 (not done the reals) has ulcers!
+  # Patient 103 ulcers ileum on w0 by score on p CEDIS ileum
+  # Patient 132 ulcers ileum on w0 by score on p CEDIS ileum
+  # Patient 136 ulcers ileum ?? partial CEDIS is not conclusive (ileum is lower)
+  # Patient 70 on w14 SESCD global 20 i global CDEIS 0 Red alert: Changed on the database
