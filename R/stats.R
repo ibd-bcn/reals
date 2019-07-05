@@ -3,6 +3,7 @@
 ##########################
 
 library(gdata)
+library("xlsx")
 library(ggplot2)
 library(ggpubr)
 library(plyr)
@@ -24,8 +25,8 @@ library(grid)
 ### 27/06/2019####
 
 # Dades
-dades <- readxl::read_xlsx('processed/AU_markers.xlsx')
-clinica <- readxl::read_xlsx('processed//M13-740_abbvie_database_210619.xlsx')
+dades <- read.xlsx('processed/AU_markers.xlsx', sheetIndex = 1)
+clinica <- read.xlsx('processed/M13-740_abbvie_database_210619.xlsx', sheetIndex = 1)
 
 clinica <- clinica[,c('Week', 'pSES.CD', 'BarCode', 'ContainerName',
                       'SubjectID', 'ulcers', 'Biopsy_Location')]
@@ -139,7 +140,7 @@ statistics_upa_yes$fdr <- p.adjust(statistics_upa_yes$p.value, method = 'fdr')
 statistics_upa <- rbind(statistics_upa, statistics_upa_no)
 statistics_upa <- rbind(statistics_upa, statistics_upa_yes)
 
-write.xlsx(statistics_upa, file='Statistics.xlsx', col.names = T, row.names = F,
+write.xlsx(statistics_upa, file='processed/Statistics.xlsx', col.names = T, row.names = F,
            showNA = T, sheetName = 'Upadacitinib')
 
 rm(statistics_upa, statistics_upa_no, statistics_upa_yes, a, b, df)
@@ -216,7 +217,7 @@ statistics_tnf_yes$fdr <- p.adjust(statistics_tnf_yes$p.value, method = 'fdr')
 statistics_tnf <- rbind(statistics_tnf, statistics_tnf_no)
 statistics_tnf <- rbind(statistics_tnf, statistics_tnf_yes)
 
-write.xlsx(statistics_tnf, file='Statistics.xlsx', col.names = T, row.names = F,
+write.xlsx(statistics_tnf, file='processed/Statistics.xlsx', col.names = T, row.names = F,
            showNA = T, append = T, sheetName = 'anti-TNF')
 
 rm(statistics_tnf, statistics_tnf_no, statistics_tnf_yes, a, b, df)
@@ -314,7 +315,7 @@ statistics_0_UPA$fdr <- p.adjust(statistics_0_UPA$p.value, method = 'fdr')
 statistics_togh <- rbind(statistics_togh, statistics_TNF_UPA, statistics_0_TNF,
                          statistics_0_UPA)
 
-write.xlsx(statistics_togh, file='Statistics.xlsx', col.names = T, row.names = F,
+write.xlsx(statistics_togh, file='processed/Statistics.xlsx', col.names = T, row.names = F,
            showNA = T, sheetName = 'Weeks 0', append = T)
 
 rm(statistics_togh, statistics_0_UPA, statistics_0_TNF, statistics_TNF_UPA, a, b, df, d,
@@ -325,7 +326,7 @@ rm(statistics_togh, statistics_0_UPA, statistics_0_TNF, statistics_TNF_UPA, a, b
 ##### plots #####
 #####
 
-pdf('Documents/azucena_salas/Reals UPA/Reals_Ileum.pdf')
+pdf('Figures/Reals_Ileum.pdf')
 
 for(i in levels(dades$Target)){
   mydata <- dades[dades$Target == i,]
@@ -439,7 +440,7 @@ for(i in levels(dades$Target)){
 dev.off()
 
 
-pdf('Documents/azucena_salas/Reals UPA/Reals_Colon.pdf')
+pdf('Figures/Reals_Colon.pdf')
 
 for(i in levels(dades$Target)){
   mydata <- dades[dades$Target == i,]
