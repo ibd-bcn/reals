@@ -22,11 +22,12 @@ reals3 <- read_xls("data/TBX21 IL17A IFN GZMH_20190531_125712_Results_Export.xls
                    skip = 15, na = c("", "Undetermined"))
 reals4 <- read_xls("data/AQP7 DERL OSM S100A8_20190618_105927_Results_Export.xls",
                    skip = 15, na = c("", "Undetermined"))
-reals5 <- read_xls("data/AQP8_20190704_165805_Results_Export.xls",
-                   skip = 0, na = c("", "Undetermined"))
+reals5 <- read_xls("data/AQP8_20190705_133502_Results_Export.xls",
+                   skip = 15, na = c("", "Undetermined"))
 upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx")
 control_codes <- read_xlsx("data/RT CONTROLS 500NG 20 UL.xlsx")
 antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xlsx")
+
 w0_remitters_upa <- read_xlsx("processed/missing_response based on ulcers UPA.xlsx") %>%
   mutate(remitter = tolower(remitter)) %>%
   rename(Biopsy_Location = "Biopsy_Location week 0") %>%
@@ -61,7 +62,7 @@ nested_well <- reals %>%
   group_by(`Experiment Name`, `Target Name`, `Sample Name`) %>%
   nest(Well)
 
-nested_well$data <- lapply(wells, unlist)
+nested_well$data <- lapply(nested_well$data, unlist)
 
 # Look for the wells how many have values
 xy <- vector("list", length = nrow(nested_well))
@@ -98,7 +99,6 @@ table(gene, ba)
 # Missing samples: Probably bad pipetting on the wet lab
 nested_well[gene == 3 & ba == 3, 1:3]
 
-
 reals %>%
   filter(`Sample Name` %in% c("41C 41W14I", "C15 ILI", "UP3 AA5292203"),
          `Experiment Name`  %in% c("040619 PLAT 4 BCN.eds",
@@ -107,6 +107,9 @@ reals %>%
          `Target Name` %in% c("AQP7", "CHI3L1", "IFN GAMMA", "BETA ACTINA")) %>%
   arrange(`Experiment Name`, Well, `Sample Name`, `Target Name`) %>%
   select(Well, `Sample Name`, `Target Name`, `Cт`)
+# no tenen res inicialment
+# Els trec??
+
 
 # Add values to those with beta actine but without gene values
 bigger_ct <- 40
@@ -119,6 +122,15 @@ for (row in seq_len(nrow(df))) {
     reals$"Sample Name" == df[row, "Sample Name"]
   reals[l, "Cт"] <- bigger_ct
 }
+
+#
+
+
+modified <- nested_well[cond, 2:3, drop = TRUE]
+a <- table(grepl("^UP", modified$`Sample Name`), modified$`Target Name`)
+rownames(a) <- c("UPA", "TNF")
+xlsx::write.xlsx(a, file = "processed/samples_added.xlsx")
+
 
 # Verify that the samples with missing values have high values of the ones
 # they have
@@ -153,6 +165,7 @@ well_failed <- reals %>%
   summarise(failed = sum(is.na(`Cт`)), targets = list(`Target Name`)) %>%
   ungroup()
 
+# Checking that we corrected well the Ct
 n <- well_failed %>%
   group_by(failed) %>%
   count() %>%
@@ -161,7 +174,7 @@ stopifnot(nrow(n) == 0)
 
 wrong_genes <- well_failed %>%
   filter(failed == 2) %>%
-  inner_join(reals) %>%
+  right_join(reals) %>%
   select(`Sample Name`, `Target Name`) %>%
   filter(`Target Name` != "BETA ACTINA") %>%
   distinct(.keep_all = TRUE)
@@ -196,7 +209,8 @@ failed <- reals %>%
          n > 1)
 
 sd_Ct <- group_by(reals, `Target Name`, `Sample Name`) %>%
-  summarise(sd = sd(`Cт`, na.rm = TRUE), mean = mean(`Cт`, na.rm = TRUE),
+  summarise(sd = sd(`Cт`, na.rm = TRUE),
+            mean = mean(`Cт`, na.rm = TRUE),
             sem = sd/sqrt(n()))
 
 
@@ -224,14 +238,62 @@ multiple_exp <- reals %>%
 m <-multiple_exp %>%
   group_by(n) %>%
   count()
-# Normal same samples have been tested for several genes in different plates
 
+# Normal same samples have been tested for several genes in different plates
 preclean <- reals %>%
   filter(`Target Name` != "BETA ACTINA") %>%
   group_by(`Sample Name`, `Target Name`) %>%
-  summarise(`ΔCт` = unique(`ΔCт Mean`)) %>%
+  summarise(`ΔCт` = unique(`ΔCт Mean`)) %>% # Fer servir
   ungroup() %>%
   filter(!is.na(`ΔCт`))
+reals <- as.data.frame(reals)
+reals$`ΔCт` <- NA
+# pb <- txtProgressBar(max = length(unique(reals$`Experiment Name`)))
+for (experiment in unique(reals$`Experiment Name`)) {
+  # setTxtProgressBar(pb,  value = getTxtProgressBar(pb) +1 )
+  pb2 <- txtProgressBar(max = length(unique(reals$`Experiment Name`)), style = 3)
+  experiment_df <- reals[reals$`Experiment Name` == experiment, ]
+   for (mostra in unique(experiment_df$`Sample Name`)) {
+     # pb3 <- txtProgressBar(max = length(unique(reals$`Experiment Name`)))
+     setTxtProgressBar(pb2,  value = getTxtProgressBar(pb2) +1 )
+     mostra_df <- experiment_df[experiment_df$`Sample Name` == mostra, ]
+        for (gen in unique(mostra_df$`Target Name`)) {
+          # setTxtProgressBar(pb3,  value = getTxtProgressBar(pb3) +1, style = 3)
+          if (gen == "BETA ACTINA") {
+            next
+          }
+          wells <- unique(mostra_df[mostra_df$`Target Name` == gen, "Well"])
+          if (length(wells) > 3) {
+            print(mostra_df[mostra_df$`Target Name` == gen, 1:10])
+            stop("Error it should be only 3")
+            break
+          }
+          beta_actina <- mean(mostra_df[
+            mostra_df$Well == wells &
+              mostra_df$`Target Name` == "BETA ACTINA",
+            "Cт"], na.rm = TRUE)
+          gene <- mean(mostra_df[
+            mostra_df$Well == wells &
+              mostra_df$`Target Name` != "BETA ACTINA",
+            "Cт"], na.rm = TRUE)
+          dCt <- gene-beta_actina
+
+          reals[reals$`Experiment Name` == experiment &
+                  reals$`Sample Name` == mostra &
+                  reals$Well %in% wells &
+                  reals$`Target Name` != "BETA ACTINA",
+                "ΔCт"] <- dCt
+        }
+   }
+}
+
+# Checking that all wells test for two genes
+reals %>%
+  group_by(Well, `Experiment Name`) %>%
+  summarise(nGenes = n_distinct(`Target Name`)) %>%
+  group_by(nGenes) %>%
+  count()
+
 
 antiTNF <- preclean %>%
   filter(grepl("[0-9]w", `Sample Name`, ignore.case = TRUE)) %>%
@@ -344,7 +406,7 @@ response <- df %>%
   unnest(remission, .drop = TRUE)
 
 response$remission[response$remission == "missing"] <- "no"
-df <- inner_join(df, response)
+df <- left_join(df, response)
 
 ## UPA ####
 duplic <- group_by(bd_upa, BarCode) %>%
@@ -393,7 +455,7 @@ mi <- response_all %>%
   unique()
 
 # Don't know where mi_loc came from
-# filter(bd_upa, SubjectID %in% mi_loc, Week < 50) %>%
+# filter(bd_upa, SubjectID %in% mi, Week < 50) %>%
 #   arrange(SubjectID, Biopsy_Location, Week) %>%
 #   select(SubjectID, Biopsy_Location, Week, ContainerName, ulcers, BarCode,
 #          pSES.CD) %>%
