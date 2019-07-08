@@ -6,11 +6,12 @@ bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
 upa <- read_xls("data/M13-740_abbvie_database_300519.xls", na = c("n.a.", ""))
 
 dff <- read_xlsx("processed/AU_markers.xlsx")
-upa2 <- mutate(upa, PCR_UPA_paper = if_else(BarCode %in% dff$Sample, "yes", "no"),
-               SubjectID = as.character(SubjectID),
-               cd = tolower(gsub("Biopsy ", "", ContainerName))) %>%
+upa2 <- upa %>% mutate(PCR_UPA_paper = if_else(BarCode %in% dff$Sample, "yes", "no"),
+                       SubjectID = as.character(SubjectID),
+                       cd = tolower(gsub("Biopsy ", "", ContainerName))) %>%
   left_join(dff[, c("Sample", "Patient", "General_location", "remission")],
-            by = c("BarCode" = "Sample", "SubjectID" = "Patient", "cd" = "General_location")) %>%
+            by = c("BarCode" = "Sample", "SubjectID" = "Patient",
+                   "cd" = "General_location")) %>%
   # select(-cd) %>%
   distinct()
 
