@@ -3,6 +3,7 @@ library("readxl")
 library("dplyr")
 library("stringr")
 library("lubridate")
+library("xlsx")
 
 # Read tables
 reals <- read_xlsx("processed/AU_markers.xlsx")
@@ -135,7 +136,7 @@ f2 <- merge(f, loc_tnf) %>%
   count() %>%
   arrange(General_location, group)
 filter(f2, group == "w0") %>%
-write_xlsx(path = "processed/treatment_TNF.xlsx")
+  write_xlsx(path = "processed/treatment_TNF.xlsx")
 
 
 # Ask azu how to put this table inside the other? Classify just AZA+IFX/corticoides and others ?
@@ -194,4 +195,26 @@ colnames(out3)[3:4] <- paste(colnames(out3)[3:4], "sem")
 out <- merge(out1, out2)
 out <- merge(out, out3)
 
-writexl::write_xlsx(out, "processed/score_segments.xlsx")
+writexl::write_xlsx(out, "processed/score_segments_TNF.xlsx")
+
+# Table UPA ####
+
+bd_upa <- read_xlsx("processed/M13-740_abbvie_database_210619.xlsx", na = c("n.a.", "NA"))
+upa2 <- right_join(bd_upa, reals[reals$Study == "UPA", ],
+            by = c("BarCode" = "Sample", "SubjectID" = "Patient",
+                   "cd" = "General_location")) %>%
+  mutate(group = if_else(Time == "w0", "w0", remission.y)) %>%
+  select(remission.x, remission.y, BarCode, pSES.CD, cd, group) %>%
+  distinct()
+
+upa2$pSES.CD <- as.numeric(upa2$pSES.CD)
+# More NA than expected.
+meanSESCD <- aggregate(pSES.CD~group+cd, data = upa2, mean, na.rm = TRUE)
+semSESCD <- aggregate(pSES.CD~group+cd, data = upa2, sem)
+sdSESCD <- aggregate(pSES.CD~group+cd, data = upa2, sd, na.rm = TRUE)
+colnames(meanSESCD)[3] <- paste(colnames(meanSESCD)[3], "mean")
+colnames(semSESCD)[3] <- paste(colnames(semSESCD)[3], "sem")
+colnames(sdSESCD)[3] <- paste(colnames(sdSESCD)[3], "sd")
+m <- merge(meanSESCD, semSESCD)
+m <- merge(m, sdSESCD)
+writexl::write_xlsx(m, "processed/score_segments_UPA.xlsx")

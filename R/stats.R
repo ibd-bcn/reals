@@ -26,6 +26,23 @@ library(grid)
 
 # Dades
 dades <- read.xlsx('processed/AU_markers.xlsx', sheetIndex = 1)
+
+# Remove outliers
+orig <- nrow(dades)
+dades <- subset(dades, !(Target == "OSM" & Study == "TNF" &
+                          Time == "w0" & AU > 35 & General_location == "colon"))
+dades <- subset(dades, !(Target == "IL17A" & Study == "UPA" &
+                          Time == "w0" & AU > 15 & General_location == "colon"))
+dades <- subset(dades, !(Target == "OSM" & Study == "UPA" &
+                          Time == "w0" & AU > 70 & General_location == "ileum"))
+dades <- subset(dades, !(Target == "APQ8" & Time == "w0" &
+                          AU > 130 & General_location == "ileum"))
+dades <- subset(dades, !(Target == "RTNLB" & Time == "w0" & Study == "TNF" &
+                          AU > 50 & General_location == "ileum"))
+# In total it should be 6
+stopifnot(orig-nrow(dades) == 6)
+
+
 clinica <- read.xlsx('processed/M13-740_abbvie_database_210619.xlsx', sheetIndex = 1)
 
 clinica <- clinica[,c('Week', 'pSES.CD', 'BarCode', 'ContainerName',
