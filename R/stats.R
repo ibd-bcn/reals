@@ -773,11 +773,21 @@ write_xlsx(within_studies, "processed/compare_whitin_studies.xlsx")
 
 today <- format(Sys.time(), "%Y%m%d")
 
-preplot <- dff %>%
+preplot <- dades %>%
   group_by(remission, Target, Location, Study) %>%
-  summarise(meanAU = mean(AU), sem = sd(AU)/sqrt(n())) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU, na.rm = TRUE)/sqrt(n())) %>%
   mutate(ymax = meanAU + sem, ymin = meanAU - sem)
 
+
+bars_controls <- dades %>%
+  filter(Study == "Ctrl") %>%
+  group_by(Target, General_location) %>%
+  summarise(meanAU = mean(AU), sem = sd(AU, na.rm = TRUE)/sqrt(n())) %>%
+  mutate(ymax = meanAU + sem, ymin = meanAU - sem) %>%
+  ungroup() %>%
+  as.data.frame()
+
+write.xlsx(bars_controls, "processed/controls_maxmin.xlsx", row.names = FALSE)
 
 dw <- merge(between_studies, d) %>%
   filter(fdr < 0.05)
