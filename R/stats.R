@@ -42,6 +42,7 @@ dades <- subset(dades, !(Target == "RTNLB" & Time == "w0" & Study == "TNF" &
 # In total it should be 6
 stopifnot(orig-nrow(dades) == 6)
 
+dades <- droplevels(dades)
 
 clinica <- read.xlsx('processed/M13-740_abbvie_database_210619.xlsx', sheetIndex = 1)
 
@@ -89,6 +90,7 @@ dades[is.na(dades$AU),]
 statistics_upa_no <- NULL
 statistics_upa_yes <- NULL
 
+## ileum w0 vs w14 ####
 for(i in levels(dades$Target)){
   mydata <- dades[dades$Target == i,]
   mydata <- mydata[mydata$General_location == 'ileum',]
@@ -121,7 +123,7 @@ statistics_upa_no$fdr <- p.adjust(statistics_upa_no$p.value, method = 'fdr')
 statistics_upa_yes$fdr <- p.adjust(statistics_upa_yes$p.value, method = 'fdr')
 statistics_upa <- rbind(statistics_upa_no, statistics_upa_yes)
 
-
+# colon w0 vs w14 ####
 statistics_upa_no <- NULL
 statistics_upa_yes <- NULL
 
@@ -160,12 +162,54 @@ statistics_upa <- rbind(statistics_upa, statistics_upa_yes)
 write.xlsx(statistics_upa, file='processed/Statistics.xlsx', col.names = T, row.names = F,
            showNA = T, sheetName = 'Upadacitinib')
 
-rm(statistics_upa, statistics_upa_no, statistics_upa_yes, a, b, df)
+
+## w0: R vs NR ####
+
+statistics_upa_no <- NULL
+statistics_upa_yes <- NULL
+
+for(i in levels(dades$Target)){
+  mydata <- dades[dades$Target == i,]
+  mydata <- mydata[mydata$General_location == 'ileum',]
+  mydata_upa <- mydata[mydata$Study == 'UPA',]
+
+  a <- wilcox.test(mydata_upa$AU[mydata_upa$myvar == 'w0_yes'],
+                   mydata_upa$AU[mydata_upa$myvar == 'w0_no'])
+  df <- data.frame('Study' = 'UPA',
+                   'Target' = i,
+                   'General Location' = 'Ileum',
+                   'Comparativa' = 'w0: R vs NR',
+                   'p.value' = a$p.value)
+
+  statistics_upa_no <- rbind(statistics_upa_no, df)
+
+  mydata <- dades[dades$Target == i,]
+  mydata <- mydata[mydata$General_location == 'colon',]
+
+  b <- wilcox.test(mydata_upa$AU[mydata_upa$myvar == 'w0_yes'],
+                   mydata_upa$AU[mydata_upa$myvar == 'w0_no'])
+  df <- data.frame('Study' = 'UPA',
+                   'Target' = i,
+                   'Comparativa' = 'w0: R vs NR',
+                   'General Location' = 'Colon',
+                   'p.value' = b$p.value)
+
+  statistics_upa_yes <- rbind(statistics_upa_yes, df)
+
+}
+
+statistics_upa_no$fdr <- p.adjust(statistics_upa_no$p.value, method = 'fdr')
+statistics_upa_yes$fdr <- p.adjust(statistics_upa_yes$p.value, method = 'fdr')
+statistics_upa <- rbind(statistics_upa_no, statistics_upa_yes)
+
+write.xlsx(statistics_upa, file='processed/Statistics.xlsx', col.names = T, row.names = F,
+           showNA = T,  append = TRUE, sheetName = 'Upadacitinib w0- R vs NR')
 
 ##### TNF ####
 statistics_tnf_no <- NULL
 statistics_tnf_yes <- NULL
 
+# ileum w0 vs w14 R ####
 for(i in levels(dades$Target)){
   mydata <- dades[dades$Target == i,]
   mydata <- mydata[mydata$General_location == 'ileum',]
@@ -198,7 +242,7 @@ statistics_tnf_no$fdr <- p.adjust(statistics_tnf_no$p.value, method = 'fdr')
 statistics_tnf_yes$fdr <- p.adjust(statistics_tnf_yes$p.value, method = 'fdr')
 statistics_tnf <- rbind(statistics_tnf_no, statistics_tnf_yes)
 
-
+# colon w0 vs W14 ####
 statistics_tnf_no <- NULL
 statistics_tnf_yes <- NULL
 
@@ -238,6 +282,47 @@ write.xlsx(statistics_tnf, file='processed/Statistics.xlsx', col.names = T, row.
            showNA = T, append = T, sheetName = 'anti-TNF')
 
 rm(statistics_tnf, statistics_tnf_no, statistics_tnf_yes, a, b, df)
+
+## w0: R vs NR ####
+statistics_tnf_no <- NULL
+statistics_tnf_yes <- NULL
+
+for(i in levels(dades$Target)){
+  mydata <- dades[dades$Target == i,]
+  mydata <- mydata[mydata$General_location == 'ileum',]
+  mydata_tnf <- mydata[mydata$Study == 'TNF',]
+
+  a <- wilcox.test(mydata_tnf$AU[mydata_tnf$myvar == 'w0_yes'],
+                   mydata_tnf$AU[mydata_tnf$myvar == 'w0_no'])
+  df <- data.frame('Study' = 'TNF',
+                   'Target' = i,
+                   'General Location' = 'Ileum',
+                   'Comparativa' = 'w0: R vs NR',
+                   'p.value' = a$p.value)
+
+  statistics_tnf_no <- rbind(statistics_tnf_no, df)
+
+  mydata <- dades[dades$Target == i,]
+  mydata <- mydata[mydata$General_location == 'colon',]
+
+  b <- wilcox.test(mydata_tnf$AU[mydata_tnf$myvar == 'w0_yes'],
+                   mydata_tnf$AU[mydata_tnf$myvar == 'w0_no'])
+  df <- data.frame('Study' = 'TNF',
+                   'Target' = i,
+                   'Comparativa' = 'w0: R vs NR',
+                   'General Location' = 'Colon',
+                   'p.value' = b$p.value)
+
+  statistics_tnf_yes <- rbind(statistics_tnf_yes, df)
+
+}
+
+statistics_tnf_no$fdr <- p.adjust(statistics_tnf_no$p.value, method = 'fdr')
+statistics_tnf_yes$fdr <- p.adjust(statistics_tnf_yes$p.value, method = 'fdr')
+statistics_tnf <- rbind(statistics_tnf_no, statistics_tnf_yes)
+
+write.xlsx(statistics_tnf, file='processed/Statistics.xlsx', col.names = T, row.names = F,
+           showNA = T, append = TRUE, sheetName = 'anti-TNF w0- R vs NR')
 
 ##### weeks 0 #####
 
