@@ -9,6 +9,14 @@ library("xlsx")
 reals <- read_xlsx("processed/AU_markers.xlsx")
 bd <- read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
 
+
+reals %>%
+  select(-Target, -AU) %>%
+  distinct() %>%
+  as.data.frame() %>%
+  write.xlsx(file = "processed/Samples.xlsx", row.names = FALSE)
+
+
 # Extract the ids of the samples of the reals for the antiTNF
 names_patients <- reals %>%
   filter(Study == "TNF") %>%
@@ -50,6 +58,8 @@ final <- merge(reals, access, all.y = TRUE) %>%
 final$`CD phenotype` <- factor(final$`CD phenotype`,
                                levels = c("Inflammatory", "Stricturing", "Penetrating",
                                           "Stricturing/Penetrating"))
+
+write.csv(final, "processed/metadata.csv", row.names = FALSE)
 final$Gender <- as.factor(final$Gender)
 final$`CD location` <- as.factor(final$`CD location`)
 final$`CD perianal disease` <- as.factor(final$`CD perianal disease`)
@@ -91,6 +101,7 @@ final %>%
   group_by(Loc, group) %>%
   summarise(
           mean = mean(`Disease_duration`, na.rm = TRUE),
+          median = median(`Disease_duration`, na.rm = TRUE),
           min = min(`Disease_duration`, na.rm = TRUE),
           max = max(`Disease_duration`, na.rm = TRUE))
 final %>%
