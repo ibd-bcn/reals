@@ -378,7 +378,7 @@ statistics_TNF_UPA <- NULL
 for(i in levels(dades$Target)){
   mydata <- dades[dades$Target == i,]
   mydata <- mydata[mydata$General_location == 'colon',]
-  mydata <- mydata[mydata$Time == 'w0' |mydata$Time == 'Ctrl' ,]
+  mydata <- mydata[mydata$Time == 'w0' | mydata$Time == 'Ctrl' ,]
 
   a <- wilcox.test(mydata$AU[mydata$Study == 'UPA'],
                    mydata$AU[mydata$Study == 'Ctrl'])
