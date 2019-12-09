@@ -45,77 +45,115 @@ access <- mutate(access,
                  Disease_duration = interval(ymd(`Birth Date`), ymd(`Inclusion date`))/years(1))
 
 
-group_by(access, `Age at diagnosis`) %>% count()
-
-final <- merge(reals, access, all.y = TRUE) %>%
+final <- merge(reals, access) %>%
   select(-AU, -Target) %>%
   distinct() %>%
   mutate(group = if_else(Time == "w14", remission, "w0")) %>%
   mutate(Loc = case_when(
     Location == "ileum" ~ "ileum",
-    TRUE ~ "colon"))
+    TRUE ~ "colon")) %>%
+  distinct(Sample, .keep_all = TRUE)
 
 final$`CD phenotype` <- factor(final$`CD phenotype`,
                                levels = c("Inflammatory", "Stricturing", "Penetrating",
                                           "Stricturing/Penetrating"))
 
 write.csv(final, "processed/metadata.csv", row.names = FALSE)
-final$Gender <- as.factor(final$Gender)
-final$`CD location` <- as.factor(final$`CD location`)
-final$`CD perianal disease` <- as.factor(final$`CD perianal disease`)
-final$Location <- as.factor(final$Location)
 
-
-table(final$`Age at diagnosis`, final$group, final$Loc, useNA = "ifany")
-table(final$`Gender`, final$group, final$Loc, useNA = "ifany")
-table(final$`CD location`, final$group, final$Loc, useNA = "ifany")
-table(final$`CD perianal disease`, final$group, final$Loc, useNA = "ifany")
-table(final$`CD phenotype`, final$group, final$Loc, useNA = "ifany")
-
-reals %>%
-  filter(Study == "TNF") %>%
-  distinct(Location, Time, Patient) %>%
-  group_by(Location) %>%
-  count()
-
-group_by(access, Gender) %>% count()
-group_by(access, `CD perianal disease`) %>% count()
-group_by(access, `CD location`) %>% count()
-group_by(access, tolower(`CD phenotype`)) %>% count()
 final %>%
+  filter(group == "w0") %>%
+  count(Loc)
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(Gender, group, Loc) %>%
+  count() %>%
+  ungroup() %>%
+  select(-group) %>%
+  arrange(Loc)
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(`Age at diagnosis`, group, Loc) %>%
+  count() %>%
+  ungroup() %>%
+  select(-group) %>%
+  arrange(Loc, desc(`Age at diagnosis`))
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(Loc, group) %>%
+  summarise(mean = mean(`Disease_duration`, na.rm = TRUE),
+            median = median(`Disease_duration`, na.rm = TRUE),
+            min = min(`Disease_duration`, na.rm = TRUE),
+            max = max(`Disease_duration`, na.rm = TRUE)) %>%
+  ungroup() %>%
+  select(-group) %>%
+  mutate_if(is.numeric, round)
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(`CD location`, group, Loc) %>%
+  count() %>%
+  ungroup() %>%
+  select(-group) %>%
+  arrange(Loc, desc(`CD location`))
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(`CD phenotype`, group, Loc) %>%
+  count() %>%
+  ungroup() %>%
+  select(-group) %>%
+  arrange(Loc)
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(`CD perianal disease`, group, Loc) %>%
+  count() %>%
+  ungroup() %>%
+  select(-group) %>%
+  arrange(Loc)
+
+final %>%
+  filter(group == "w0") %>%
+  group_by(Loc, group) %>%
+  summarise(mean = mean(`SES-CD (global)`, na.rm = TRUE),
+            median = median(`SES-CD (global)`, na.rm = TRUE),
+            min = min(`SES-CD (global)`, na.rm = TRUE),
+            max = max(`SES-CD (global)`, na.rm = TRUE)) %>%
+  ungroup() %>%
+  select(-group)
+
+final %>%
+  filter(group == "w0") %>%
   group_by(Loc, group) %>%
   summarise(mean = mean(`CDAI CD`, na.rm = TRUE),
+            median = median(`CDAI CD`, na.rm = TRUE),
             min = min(`CDAI CD`, na.rm = TRUE),
-            max = max(`CDAI CD`, na.rm = TRUE))
+            max = max(`CDAI CD`, na.rm = TRUE)) %>%
+  ungroup() %>%
+  select(-group)
+
 final %>%
+  filter(group == "w0") %>%
+  group_by(Loc, group) %>%
+  summarise(mean = mean(`CDEIS CD`, na.rm = TRUE),
+            median = median(`CDEIS CD`, na.rm = TRUE),
+            min = min(`CDEIS CD`, na.rm = TRUE),
+            max = max(`CDEIS CD`, na.rm = TRUE)) %>%
+  ungroup() %>%
+  select(-group)
+
+final %>%
+  filter(group == "w0") %>%
   group_by(Loc, group) %>%
   summarise(mean = mean(`CRP`, na.rm = TRUE),
+          median = median(`CRP`, na.rm = TRUE),
           min = min(`CRP`, na.rm = TRUE),
-          max = max(`CRP`, na.rm = TRUE))
-final %>%
-  group_by(Loc, group) %>%
-summarise(mean = mean(`SES-CD (global)`, na.rm = TRUE),
-          min = min(`SES-CD (global)`, na.rm = TRUE),
-          max = max(`SES-CD (global)`, na.rm = TRUE))
-final %>%
-  group_by(Loc, group) %>%
-  summarise(
-          mean = mean(`Disease_duration`, na.rm = TRUE),
-          median = median(`Disease_duration`, na.rm = TRUE),
-          min = min(`Disease_duration`, na.rm = TRUE),
-          max = max(`Disease_duration`, na.rm = TRUE))
-final %>%
-  group_by(Loc, group) %>%
-  summarise(
-          mean = mean(`CDEIS CD`, na.rm = TRUE),
-          min = min(`CDEIS CD`, na.rm = TRUE),
-          max = max(`CDEIS CD`, na.rm = TRUE))
-final %>%
-  group_by(Loc, group) %>%
-summarise(mean = mean(`Disease_duration`, na.rm = TRUE),
-          min = min(`Disease_duration`, na.rm = TRUE),
-          max = max(`Disease_duration`, na.rm = TRUE))
-
+          max = max(`CRP`, na.rm = TRUE)) %>%
+  ungroup() %>%
+  select(-group)
 
 # Treatment drugs
 drugs <- read_xlsx("data/20190704_Treatment.xlsx")
@@ -180,7 +218,8 @@ out <- seg3 %>%
   mutate(group = if_else(Time == "w0", "w0", remission)) %>%
   group_by(group, General_location, Location) %>%
   select(Sample, unlist(d, use.names = FALSE)) %>%
-  distinct(Sample, Location, .keep_all = TRUE)
+  distinct(Sample, Location, .keep_all = TRUE) %>%
+  ungroup()
 
 # Check that each sample has just one time
 stopifnot(!any(rowSums(table(seg3$Sample, seg3$Week)) != 1))
@@ -196,15 +235,24 @@ scores <- function(x){
 }
 
 m <- apply(out, 1, scores)
+m <- apply(t(m), 2, as.numeric)
 sem <- function(x){sd(x, na.rm = TRUE)/sqrt(sum(!is.na(x)))}
-out1 <- aggregate(apply(t(m), 2, as.numeric), out[, 1:2], mean, na.rm = TRUE)
-out2 <- aggregate(apply(t(m), 2, as.numeric), out[, 1:2], sd, na.rm = TRUE)
-out3 <- aggregate(apply(t(m), 2, as.numeric), out[, 1:2], sem)
+out1 <- aggregate(m, out[, 1:2], mean, na.rm = TRUE)
+out2 <- aggregate(m, out[, 1:2], sd, na.rm = TRUE)
+out3 <- aggregate(m, out[, 1:2], sem)
 colnames(out1)[3:4] <- paste(colnames(out1)[3:4], "mean")
 colnames(out2)[3:4] <- paste(colnames(out2)[3:4], "sd")
 colnames(out3)[3:4] <- paste(colnames(out3)[3:4], "sem")
+
+# Global mean and sd
+apply(m[out$group == "w0", ], 2, mean, na.rm = TRUE)
+apply(m[out$group == "w0", ], 2, sd, na.rm = TRUE)
+
+
 out <- merge(out1, out2)
 out <- merge(out, out3)
+
+
 
 writexl::write_xlsx(out, "processed/score_segments_TNF.xlsx")
 
