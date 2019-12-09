@@ -24,9 +24,7 @@ reals4 <- read_xls("data/AQP7 DERL OSM S100A8_20190618_105927_Results_Export.xls
                    skip = 15, na = c("", "Undetermined"))
 reals5 <- read_xls("data/AQP8_20190705_133502_Results_Export.xls",
                    skip = 15, na = c("", "Undetermined"))
-upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx")
-control_codes <- read_xlsx("data/RT CONTROLS 500NG 20 UL.xlsx")
-antiTNF_codes <- read_xlsx("data/RT biopsies BCN bloc A B C D 500 ng en 20 ul.xlsx")
+upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx", range = cell_cols(1:7))
 
 w0_remitters_upa <- read_xlsx("processed/missing_response based on ulcers UPA.xlsx") %>%
   mutate(remitter = tolower(remitter)) %>%
@@ -60,7 +58,7 @@ reals$`Sample Name`[grepl("^48C 42W", reals$`Sample Name`, ignore.case = TRUE)] 
 nested_well <- reals %>%
   filter(`Target Name` != "BETA ACTINA") %>%
   group_by(`Experiment Name`, `Target Name`, `Sample Name`) %>%
-  nest(Well)
+  nest(data = Well)
 
 nested_well$data <- lapply(nested_well$data, unlist)
 
@@ -288,12 +286,12 @@ for (experiment in unique(reals$`Experiment Name`)) {
 }
 
 # Checking that all wells test for two genes
-reals %>%
+ch <- reals %>%
   group_by(Well, `Experiment Name`) %>%
   summarise(nGenes = n_distinct(`Target Name`)) %>%
   group_by(nGenes) %>%
   count()
-
+stopifnot(nrow(ch) == 1)
 
 antiTNF <- preclean %>%
   filter(grepl("[0-9]w", `Sample Name`, ignore.case = TRUE)) %>%
@@ -401,9 +399,11 @@ df <- merge(bd2, antiTNF, all.x = FALSE, all.y = TRUE,
 
 response <- df %>%
   group_by(Pacient_id, biopsied_segment) %>%
-  nest(Ulcers, Time, .key = AnyUlcers) %>%
+  nest(AnyUlcers = c(Ulcers, Time)) %>%
   mutate(remission = map(AnyUlcers, remission)) %>%
-  unnest(remission, .drop = TRUE)
+  ungroup() %>%
+  select(-AnyUlcers)
+
 
 response$remission[response$remission == "missing"] <- "no"
 df <- left_join(df, response)
@@ -436,16 +436,18 @@ df_upa <- merge(UPA, upa_codes,  by.x = "Id", by.y = "RT TUBE",
   rename(Ulcers = ulcers, Time = Week)
 
 response <- df_upa %>%
+  mutate(SubjectID = as.character(SubjectID)) %>%
   group_by(SubjectID, Biopsy_Location) %>%
-  nest(Ulcers, Time, .key = "AnyUlcers") %>%
-  mutate(remission = map(AnyUlcers, remission), SubjectID = as.character(SubjectID)) %>%
-  unnest(remission, .drop = TRUE)
+  nest(AnyUlcers = c(Ulcers, Time)) %>%
+  mutate(remission = map(AnyUlcers, remission)) %>%
+  unnest(AnyUlcers)
 
 response_all <- merge(response, w0_remitters_upa,
                       by.x = c("SubjectID", "Biopsy_Location"),
                       by.y = c("Patient", "Biopsy_Location"),
                       all.x = TRUE, all.y = FALSE) %>%
-  mutate(remission = if_else(remission == "missing", remitter, remission)) %>%
+  mutate(remission = unlist(remission),
+    remission = if_else(remission == "missing", remitter, remission)) %>%
   select(-remitter)
 
 
@@ -495,7 +497,8 @@ colnames(controls_df) <- coln
 dff <- rbind(cbind(upa_df, "Study" = "UPA"),
              cbind(antiTNF_df, "Study" = "TNF"),
              cbind(controls_df, "Study" = "C")) %>%
-  mutate(Location = tolower(Location)) %>%
+  mutate(Location = tolower(Location),
+         remission = unlist(remission)) %>%
   filter(remission != "not interesting") %>%
   # Remove a sample of a gene because there was some problem with the control
   filter(!(Target == "OSM" & Patient == "48" & Study == "TNF" &
