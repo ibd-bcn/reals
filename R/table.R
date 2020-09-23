@@ -158,6 +158,44 @@ final %>%
   ungroup() %>%
   select(-group)
 
+# 2020/09/23 Update from Azu
+# median (range) value of baseline SES-CD in all patients receiving anti-TNF
+final %>%
+  filter(group == "w0" & Study == "TNF") %>%
+  group_by(Loc) %>%
+  summarise(mean = mean(`SES-CD (global)`, na.rm = TRUE),
+            median = median(`SES-CD (global)`, na.rm = TRUE),
+            min = min(`SES-CD (global)`, na.rm = TRUE),
+            max = max(`SES-CD (global)`, na.rm = TRUE))
+final %>%
+  filter(group == "w0" & Study == "TNF") %>%
+  summarise(mean = mean(`SES-CD (global)`, na.rm = TRUE),
+            median = median(`SES-CD (global)`, na.rm = TRUE),
+            min = min(`SES-CD (global)`, na.rm = TRUE),
+            max = max(`SES-CD (global)`, na.rm = TRUE))
+aTNF_w0_sample <- final %>%
+  filter(group == "w0" & Study == "TNF") %>%
+  mutate(`SES-CD fragment` = case_when(
+    Location == "sigmoid" ~ `SES-CD partial sigma`,
+    Location == "ascending" ~ `SES-CD partial ascending`,
+    Location == "descending" ~ `SES-CD partial descending`,
+    Location == "ileum" ~ `SES-CD partial ileum`,
+    Location == "rectum" ~ `SES-CD partial rectum`,
+    Location == "transverse" ~ `SES-CD partial transverse`,
+  ))
+aTNF_w0_sample %>%
+  group_by(Loc) %>%
+  summarise(mean = mean(`SES-CD fragment`, na.rm = TRUE),
+            median = median(`SES-CD fragment`, na.rm = TRUE),
+            min = min(`SES-CD fragment`, na.rm = TRUE),
+            max = max(`SES-CD fragment`, na.rm = TRUE))
+aTNF_w0_sample %>%
+  summarise(mean = mean(`SES-CD fragment`, na.rm = TRUE),
+            median = median(`SES-CD fragment`, na.rm = TRUE),
+            min = min(`SES-CD fragment`, na.rm = TRUE),
+            max = max(`SES-CD fragment`, na.rm = TRUE))
+
+
 # Treatment drugs
 drugs <- read_xlsx("data/20190704_Treatment.xlsx")
 f <- drugs %>%
