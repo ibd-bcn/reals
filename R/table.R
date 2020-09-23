@@ -23,6 +23,13 @@ names_patients <- reals %>%
   pull(Patient) %>%
   unique() %>%
   sort()
+access2 <- read_excel("processed/Patients Consulta.xlsx", na = "") %>%
+  mutate(ids = paste0(as.numeric(`Patients_id Patient`), "-w0"),
+         Disease_duration = interval(as.Date(`Date of diagnosis`), Date)/years(1),
+         Patient_id = as.character(as.numeric(`Patients_id Patient`))) %>%
+  filter(Patient_id %in% names_patients)
+
+access2$Disease_duration[access2$Disease_duration < 0] <- 0
 
 access <- read_excel("data/20190702_consulta_BCN_bbddd_4.xlsx", na = c("N/A", "")) %>%
   mutate(Patient_id = as.character(as.numeric(`Patients.ID patient`)),
@@ -41,10 +48,6 @@ access <- access %>%
 access$`Inclusion date`[access$Patient_id == "169"] <- as.POSIXct("2017-01-10", tz = "UTC")
 access$`Inclusion date`[access$Patient_id == "172"] <- as.POSIXct("2017-02-16", tz = "UTC")
 
-access <- mutate(access,
-                 Disease_duration = interval(ymd(`Birth Date`), ymd(`Inclusion date`))/years(1))
-
-
 final <- merge(reals, access) %>%
   select(-AU, -Target) %>%
   distinct() %>%
@@ -57,6 +60,7 @@ final <- merge(reals, access) %>%
 final$`CD phenotype` <- factor(final$`CD phenotype`,
                                levels = c("Inflammatory", "Stricturing", "Penetrating",
                                           "Stricturing/Penetrating"))
+final <- merge(final, access2, by = "Patient_id")
 
 write.csv(final, "processed/metadata.csv", row.names = FALSE)
 
@@ -82,13 +86,12 @@ final %>%
 
 final %>%
   filter(group == "w0") %>%
-  group_by(Loc, group) %>%
+  group_by(Loc) %>%
   summarise(mean = mean(`Disease_duration`, na.rm = TRUE),
             median = median(`Disease_duration`, na.rm = TRUE),
             min = min(`Disease_duration`, na.rm = TRUE),
             max = max(`Disease_duration`, na.rm = TRUE)) %>%
   ungroup() %>%
-  select(-group) %>%
   mutate_if(is.numeric, round)
 
 final %>%
@@ -244,7 +247,7 @@ colnames(out1)[3:4] <- paste(colnames(out1)[3:4], "mean")
 colnames(out2)[3:4] <- paste(colnames(out2)[3:4], "sd")
 colnames(out3)[3:4] <- paste(colnames(out3)[3:4], "sem")
 
-# Global mean and sd
+# Global mean and sd on page 15
 apply(m[out$group == "w0", ], 2, mean, na.rm = TRUE)
 apply(m[out$group == "w0", ], 2, sd, na.rm = TRUE)
 
