@@ -27,18 +27,18 @@ bd2 <- mutate(bd, PCR_UPA_paper = if_else(
   select(-s) %>%
   distinct()
 
-write.xlsx(upa2, "processed/M13-740_abbvie_database_210619.xlsx", keepNA = FALSE,
+openxlsx::write.xlsx(upa2, "processed/M13-740_abbvie_database_210619.xlsx", keepNA = FALSE,
            firstRow = TRUE, colNames = TRUE)
-write.xlsx(bd2, "processed/bd_BCN_tnf_biopsies_210619.xlsx", keepNA = FALSE,
+openxlsx::write.xlsx(bd2, "processed/bd_BCN_tnf_biopsies_210619.xlsx", keepNA = FALSE,
            firstRow = TRUE, colNames = TRUE)
 
 bd3 <- select(bd2, -c(grep("\\.", colnames(bd2), value = TRUE), "fastq_file")) %>%
   filter(PCR_UPA_paper == "yes") %>%
   mutate(k = duplicated(gsub("^0| reseq", "", tolower(Sample_id))),
-         k2 = if_else(seq_len(n()) %in% (which(k)-1), FALSE, TRUE)
+         k2 = if_else(seq_len(n()) %in% (which(k) - 1), FALSE, TRUE)
          ) %>%
   filter(k2) %>%
   select(-PCR_UPA_paper, -k, -k2)
 k <- sapply(bd3, function(x){all(is.na(x))})
-write.xlsx(bd3[, !k], "processed/bd_BCN_PCR_UPA_paper.xlsx", keepNA = FALSE,
+openxlsx::write.xlsx(bd3[, !k], "processed/bd_BCN_PCR_UPA_paper.xlsx", keepNA = FALSE,
            firstRow = TRUE, colNames = TRUE, withFilter = TRUE)
