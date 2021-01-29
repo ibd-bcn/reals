@@ -84,7 +84,7 @@ for (i in 1:length(levels(dades$BarCode))) {
     taula <- rbind(taula, df)
   }
   if (nrow(data) > 6) {
-    message(barcode " PRESENT IN TWO EXPERIMENTS")
+    message(barcode, " PRESENT IN TWO EXPERIMENTS")
     for (k in levels(as.factor(data$Experiment))) {
       datai <- data[data$Experiment == k, ]
       datai <- datai[!is.na(datai$CTN), ]
