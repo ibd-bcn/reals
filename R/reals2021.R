@@ -24,12 +24,10 @@ merger <- function(x, y) {
 }
 dades <- Reduce(merger, dades0)
 dades <- dades %>%
-  filter(nchar(Well) <= 3, !is.na(Well), # Filter the ending of the tables
-         !is.na(`Sample Name`))  # filter actual samples and do not use blanks
+  filter(nchar(Well) <= 3, !is.na(Well), # Filter the end info of the tables
+         !is.na(`Sample Name`))  # remove blanks
 
-clinica <- readxl::read_xlsx("processed/M13-740_abbvie_database_210619.xlsx")
-
-# Read correspondence between sample name on RT and on the databases
+# Read other sample's ID ####
 RT_BCN <- readxl::read_xlsx("data/Samples.xlsx", sheet = 2)
 RT_BCN <- RT_BCN[!is.na(RT_BCN$`RT TUBE`), ]
 colnames(RT_BCN)[2] <- "SAMPLE"
@@ -48,24 +46,14 @@ RT_CTRL$`RT TUBE` <- paste0("Sample ", RT_CTRL$`RT TUBE`)
 # Merge all samples together
 RT <- rbind(RT_BCN[, 1:2], RT_UPA[, 1:2], RT_CTRL[, 1:2])
 
-clinica <- clinica[, c(
-  "Week", "pSES.CD", "BarCode", "ContainerName",
-  "SubjectID", "ulcers", "Biopsy_Location"
-)]
-
-# colnames(dades) <- c(
-#     "Experiment", "Well", "Sample_name", "Target.Name",
-#     "CT", "CT_Mean", "DcT_Mean", "DcT_SE", "Threshold",
-#     "Auto.Baseline", "Baseline.Start", "Baseline.End"
-# )
-
+# Use easier colnames
 colnames(dades)[colnames(dades) == "Cт"] <- "CT"
 colnames(dades)[colnames(dades) == "Sample Name"] <- "Sample_name"
 colnames(dades)[colnames(dades) == "Target Name"] <- "Target.Name"
 dades$CT[grep(pattern = "Und", dades$CT)] <- NA
 dades$CT <- as.numeric(dades$CT)
-dades$CTN <- as.numeric(dades$CT)
 
+# Samples Ids ####
 # Rename a duplicated sample due to piepetting
 # Just 2 wells for HDC gene
 stopifnot(sum(endsWith(dades$Sample_name, "BCN")) == 4)
@@ -74,8 +62,9 @@ dades$Sample_name[endsWith(dades$Sample_name, "BCN")] <- "107C"
 dades2 <- merge(dades, RT,
                 by.y = "RT TUBE", by.x = "Sample_name",
                 all.x = TRUE, sort = FALSE)
+dades2$SAMPLE <- gsub(pattern = "^0", replacement = "", x = dades2$SAMPLE)
 
-# Samples ####
+# QC check ####
 # Samples missing both genes in the same well
 bad_well <- dades2 %>%
   filter(is.na(CT)) %>%
@@ -103,7 +92,7 @@ dades2$CT[dades2$Target.Name == "ADCYAP1" &
            is.na(dades2$CT) &
            dades2$Sample_name %in% tail(bad_genes$Sample_name, 6)] <- 40
 
-# Look for the beta actina of the same well as the genes ####
+# Check beta actina ####
 nested_well <- dades2 %>%
   filter(Target.Name != "BETA ACTINA") %>%
   group_by(Experiment, Target.Name, Sample_name) %>%
@@ -136,129 +125,202 @@ gene <- sapply(xy, function(x){
   x[x$`Target.Name` != "BETA ACTINA", "nas", drop = TRUE]})
 table(gene)
 
-####
-
-dades2$BarCode <- as.factor(dades2$Sample_name)
-taula <- NULL
-
-
-dCT <- dades2 %>%
+# Calculate AU ####
+## Barcelona ####
+antiTNF <- dades2 %>%
+  filter(endsWith(Sample_name, "C")) %>%
   arrange(Experiment, SAMPLE, Sample_name) %>%
   group_by(Experiment, SAMPLE, Sample_name) %>%
   summarize(
     Gene = unique(Target.Name[Target.Name != "BETA ACTINA"]),
     base_expr = mean(CT[Target.Name == "BETA ACTINA"], na.rm = TRUE),
+    base_n = sum(!is.na(CT[Target.Name == "BETA ACTINA"])),
     target_expr = mean(CT[Target.Name != "BETA ACTINA"], na.rm = TRUE),
+    target_n = sum(!is.na(CT[Target.Name != "BETA ACTINA"])),
     dCT = base_expr - target_expr,
-    AU = 2^dCT * 1000)
+    AU = 2^dCT * 1000) %>%
+  ungroup()
+
 
 # Check that we only have a missing sample
-stopifnot(sum(is.na(dCT$AU)) == 1)
-stopifnot(sum(is.na(dCT$AU[dCT$Sample_name == "107C"])) == 1)
-dCT <- dCT[!is.na(dCT$AU), ]
+stopifnot(all(antiTNF$base_n <= 2))
+stopifnot(all(antiTNF$target_n <= 2))
+stopifnot(sum(is.na(antiTNF$AU)) == 1)
+stopifnot(sum(is.na(antiTNF$AU[antiTNF$Sample_name == "107C"])) == 1)
+antiTNF <- antiTNF %>%
+  select(-base_n, -target_n) %>%
+  filter(!is.na(AU))
 
-for (i in 1:length(levels(dades2$BarCode))) {
-  barcode <- levels(dades2$BarCode)[i]
-  if (barcode %in% RT$Sample.ID) {
-    message("Present both in Azucena and Miram files")
-  }
-  if (!(barcode %in% RT$Sample.ID)) {
-    message("NO RT")
-  }
-  if (barcode %in% clinica$BarCode) {
-    message("Present both in Azucena and Lluís files")
-  }
-  if (!(barcode %in% clinica$BarCode)) {
-    message("NO CLINICA for ", barcode)
-  }
+## Controls ####
+# Find which wells have the data for the same genes of samples of experiments
+ctrl_groups <- dades2 %>%
+  filter(startsWith(Sample_name, "Sample")) %>%
+  arrange(Experiment, SAMPLE, Sample_name, Well) %>%
+  group_by(Experiment, SAMPLE, Sample_name) %>%
+  filter(Target.Name != "BETA ACTINA") %>%
+  mutate(group = Target.Name) %>%
+  select(Well, group)
 
-  if (barcode == "AC7980403") {
-    message(i)
-  }
-  data <- dades2[dades2$BarCode == barcode, ]
-  if (nrow(data) == 6) {
-    data <- data[!is.na(data$CTN), ]
-    bact <- mean(data$CTN[data$Target.Name == "BETA ACTINA"])
-    targ <- mean(data$CTN[data$Target.Name == "KLRC2"])
 
-    df <- data.frame(
-      "sample" = barcode,
-      "week" = unique(clinica$Week[clinica$BarCode == barcode]),
-      "pSES.CD" = unique(clinica$pSES.CD[clinica$BarCode == barcode]),
-      "ContainerName" = unique(clinica$ContainerName[clinica$BarCode == barcode]),
-      "SubjectID" = unique(clinica$SubjectID[clinica$BarCode == barcode]),
-      "ulcers" = unique(clinica$ulcers[clinica$BarCode == barcode]),
-      "Biopsy_Location" = unique(clinica$Biopsy_Location[clinica$BarCode == barcode]),
-      "CT_mean_B_ACTINA" = bact,
-      "CT_mean_KLRC2" = targ,
-      "DcT" = targ - bact,
-      "AU" = 2^(bact - targ) * 1000
-    )
-    taula <- rbind(taula, df)
-  }
-  if (nrow(data) > 6) {
-    message(barcode, " PRESENT IN TWO EXPERIMENTS")
-    for (k in levels(as.factor(data$Experiment))) {
-      datai <- data[data$Experiment == k, ]
-      datai <- datai[!is.na(datai$CTN), ]
-      bact <- mean(datai$CTN[datai$Target.Name == "BETA ACTINA"])
-      targ <- mean(datai$CTN[datai$Target.Name == "KLRC2"])
+ctrl <- dades2 %>%
+  filter(startsWith(Sample_name, "Sample")) %>%
+  arrange(Experiment, SAMPLE, Sample_name, Well) %>%
+  full_join(ctrl_groups) %>%
+  group_by(Experiment, SAMPLE, Sample_name, group) %>%
+  summarize(
+    Gene = unique(Target.Name[Target.Name != "BETA ACTINA"]),
+    base_expr = mean(CT[Target.Name == "BETA ACTINA"], na.rm = TRUE),
+    base_n = sum(!is.na(CT[Target.Name == "BETA ACTINA"])),
+    target_expr = mean(CT[Target.Name != "BETA ACTINA"], na.rm = TRUE),
+    target_n = sum(!is.na(CT[Target.Name != "BETA ACTINA"])),
+    dCT = base_expr - target_expr,
+    AU = 2^dCT * 1000) %>%
+  ungroup()
 
-      df <- data.frame(
-        "sample" = paste(barcode, k),
-        "week" = clinica$Week[clinica$BarCode == barcode],
-        "pSES.CD" = clinica$pSES.CD[clinica$BarCode == barcode],
-        "ContainerName" = clinica$ContainerName[clinica$BarCode == barcode],
-        "SubjectID" = clinica$SubjectID[clinica$BarCode == barcode],
-        "ulcers" = clinica$ulcers[clinica$BarCode == barcode],
-        "Biopsy_Location" = clinica$Biopsy_Location[clinica$BarCode == barcode],
-        "CT_mean_B_ACTINA" = bact,
-        "CT_mean_KLRC2" = targ,
-        "DcT" = targ - bact,
-        "AU" = 2^(bact - targ) * 1000
-      )
-      taula <- rbind(taula, df)
+# Check that we used only duplicates
+stopifnot(all(ctrl$group == ctrl$Gene))
+stopifnot(all(ctrl$base_n == 2))
+stopifnot(all(ctrl$target_n == 2))
+ctrl <- select(ctrl, -group, -base_n, -target_n)
+
+## UPA ####
+
+# Merge metadata ####
+# To remember on this datasets there is only one segment per patient
+# Read files with the information
+bd <- readxl::read_xls("data/bd_BCN_tnf_biopsies_110119.xls", na = c("n.a.", ""))
+bd_upa <- readxl::read_xls("data/M13-740_abbvie_database_300519.xls", na = c("n.a.", "NA"))
+
+# Function to know if there were Ulcers
+remission <- function(x) {
+  if (any(x$Time == "w14")) {
+    x <- unique(x)
+    if (x$Ulcers[x$Time == "w14"] == "yes") {
+      return("no")
+    } else {
+      return("yes")
     }
+  } else {
+    return("missing")
   }
 }
 
-## hi ha una mostra present a dos taules, suposo que per mirar tema batch.
-## Ho parlo amb l'Azu, es tracta d'un error.
 
-##
-taula[grep("eds", taula$sample), ]
-#     sample                                  week pSES.CD ContainerName
-# 94  Y45570803 210619 UPA HEALTHY PLAT 1.eds   14       4  Biopsy Ileum
-# 95  Y45570803 210619 UPA HEALTHY PLAT 3.eds   14       4  Biopsy Ileum
+## Barcelona ####
+bd2 <- bd %>%
+  mutate(Sample_id = tolower(Sample_id)) %>%
+  filter(stringr::str_detect(Sample_id, "-w"), IBD == "CD") %>%
+  select(Sample_id, CD_endoscopic_remission, CD_endoscopic_response,
+         sample_location, Ulcers, biopsied_segment) %>%
+  mutate(Sample_id = gsub(" reseq|rep", "", Sample_id),
+         Pacient_id = as.character(as.numeric(gsub("-w.*", "", Sample_id))),
+         Time = stringr::str_extract(Sample_id, "w[0-9]*"),
+         Sample_id = paste0(Pacient_id, "-", Time)) %>%
+  filter(Time %in% c("w0", "w14")) %>%
+  distinct() %>%
+  rename(Location = sample_location)
 
-# SubjectID    ulcers Biopsy_Location CT_mean_B_ACTINA CT_mean_KLRC2
-# 94     12501    yes           ileum         20.53750        31.294
-# 95     12501    yes           ileum         20.72767        27.831
+antiTNF <- antiTNF %>%
+  mutate(
+    SAMPLE = tolower(SAMPLE),
+    Pacient_id = as.character(as.numeric(gsub("-w.*", "", SAMPLE))),
+    Time = stringr::str_extract(SAMPLE, "w[0-9]*"),
+    Sample_id = paste0(Pacient_id, "-", Time),
+  )
 
-# DcT        AU
-# 94 10.756499 0.5780575
-# 95  7.103333 7.2724987
+df <- merge(bd2, antiTNF, all.x = FALSE, all.y = TRUE,
+            by = c("Sample_id", "Pacient_id", "Time")) %>%
+  filter(!(Time == "w0" & Ulcers == "no"))
+
+# Check if they are in remission
+response <- df %>%
+  group_by(Pacient_id, biopsied_segment) %>%
+  nest(AnyUlcers = c(Ulcers, Time)) %>%
+  mutate(remission = purrr::map_chr(AnyUlcers, remission)) %>%
+  ungroup() %>%
+  select(-AnyUlcers)
+# Those missing had as no ulcers as the code on read.R says and
+# I recall from exchange with Azucena Salas
+response$remission[response$remission == "missing"] <- "no"
+df <- left_join(df, response)
+
+## Controls ####
+
+ctrl$Time <- "C"
+ctrl$Remission <- "yes"
+ctrl$ulcers <- NA
 
 
-## alunes mostres tenen "NaN", mirem-les.
+## UPA ####
 
-mostres <- as.character(taula$sample[is.nan(taula$DcT)])
-dades2_mostres <- dades2[dades2$BarCode %in% mostres, ]
+upa_codes <- readxl::read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx",
+                               range = cell_cols(1:7)) %>%
+  filter(!is.na(`PLACA MICRONIC`))
 
-## Aquestes 6 mostres ja estan marcades en groc a l'excel que
-## m'ha passat l'Azu, han de tenir el CT mes alt de tot el seu grup.
+bd_upa <- bd_upa %>%
+  select(Week, pSES.CD, BarCode, ContainerName, SubjectID,
+         ulcers, Biopsy_Location) %>%
+  distinct()
 
-taula$CT_mean_KLRC2[is.nan(taula$CT_mean_KLRC2)] <- max(taula$CT_mean_KLRC2[!is.nan(taula$CT_mean_KLRC2)])
-taula$DcT <- taula$CT_mean_KLRC2 - taula$CT_mean_B_ACTINA
-taula$AU <- 2^(-taula$DcT) * 1000
-taula$week[taula$week == "52"] <- "14"
-#  Arxiu original a 'O:/IBD_LAB/Personals/Ana/Azu/dades2_Mostres.xlsx'
+duplic <- group_by(bd_upa, BarCode) %>%
+  summarise(BarCodes = n()) %>%
+  filter(BarCodes != 1) %>%
+  pull(BarCode)
+# Because we have duplicates we remove some data (first filtering for what do we care
+bd_upa <- bd_upa %>%
+  select(Week, pSES.CD, BarCode, ContainerName, SubjectID, ulcers, Biopsy_Location) %>%
+  distinct()
+
+# Prepare the data for filtering and remissions
+df_upa <- merge(UPA, upa_codes,  by.x = "Id", by.y = "RT TUBE",
+                all.x = TRUE, all.y = FALSE) %>%
+  left_join(bd_upa, by = c("nº muestra" = "BarCode")) %>%
+  mutate(ContainerName = gsub("Biopsy ", "", ContainerName),
+         Location = ContainerName,
+         Week = paste0("w", Week),
+         pSES.CD = as.numeric(pSES.CD),
+         remission_old = case_when(
+           Week == "w0" ~ "w0",
+           Week != "w0" & pSES.CD < 5 ~ "w14 remiters",
+           Week != "w0" & pSES.CD >= 5 ~ "w14 non-remiters",
+           TRUE ~ Week),
+         SubjectID = as.character(SubjectID)) %>%
+  filter(!(Week == "w0" & ulcers == "no")) %>%
+  rename(Ulcers = ulcers, Time = Week)
+
+response <- df_upa %>%
+  mutate(SubjectID = as.character(SubjectID)) %>%
+  group_by(SubjectID, Biopsy_Location) %>%
+  nest(AnyUlcers = c(Ulcers, Time)) %>%
+  mutate(remission = purrr::map_chr(AnyUlcers, remission)) %>%
+  unnest(AnyUlcers)
+
+response_all <- merge(response, w0_remitters_upa,
+                      by.x = c("SubjectID", "Biopsy_Location"),
+                      by.y = c("Patient", "Biopsy_Location"),
+                      all.x = TRUE, all.y = FALSE) %>%
+  mutate(remission = unlist(remission),
+         remission = if_else(remission == "missing", remitter, remission)) %>%
+  select(-remitter)
+
+df_upa <- df_upa %>%
+  left_join(distinct(response_all)) %>%
+  mutate(remission = if_else(is.na(remission), "yes", remission),
+         Time = if_else(Time == "w52", "w14", Time)) %>%
+  distinct()
+
+
+#  Write
 write.xlsx(
-  x = taula, file = "processed/dades2_mostres_reals21.xlsx",
-  sheetName = "1", col.names = T, row.names = F
+  x = dCT, file = "processed/mostres_reals21.xlsx",
+  sheetName = "1", col.names = TRUE, row.names = FALSE
 )
 
-##### plots ######
+# Merge all data ####
+coln <- c("Sample", "Patient", "Time", "remission", "Target", "AU", "Location")
+# Reorder columns and remove some of them.
+
+# plots ######
 
 ## colon
 taula_colon <- taula[taula$ContainerName == "Biopsy Colon", ]
