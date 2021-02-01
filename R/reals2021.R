@@ -6,14 +6,14 @@ library("ggplot2", warn.conflicts = FALSE)
 library("ggpubr")
 library("tidyr", quietly = TRUE, warn.conflicts = FALSE)
 library("ggthemes", warn.conflicts = FALSE)
-library("Rmisc", quietly = TRUE, warn.conflicts = FALSE)
+library("Rmisc", quietly = TRUE, warn.conflicts = FALSE, mask.ok = "mutate")
 library("dplyr", quietly = TRUE, warn.conflicts = FALSE)
 library("gridExtra", quietly = TRUE, warn.conflicts = FALSE)
 library("grid")
 
 
 # Dades
-new_files <- list.files(pattern = "*.xls", path = "data/reals2021/", full.names = TRUE)
+new_files <- list.files(pattern = "*.xls", path = "data/reals2021", full.names = TRUE)
 dades0 <- lapply(new_files, readxl::read_xls, skip = 7, n_max = 192)
 for (i in seq_along(dades0)) {
   dades0[[i]] <- cbind(Experiment = basename(new_files[i]), dades0[[i]])
@@ -28,7 +28,26 @@ dades <- dades %>%
          !is.na(`Sample Name`))  # filter actual samples and do not use blanks
 
 clinica <- readxl::read_xlsx("processed/M13-740_abbvie_database_210619.xlsx")
-RT <- readxl::read_xlsx("data/RT UPA_healthy.xlsx")
+
+# Read correspondence between sample name on RT and on the databases
+RT_BCN <- readxl::read_xlsx("data/Samples.xlsx", sheet = 2)
+RT_BCN <- RT_BCN[!is.na(RT_BCN$`RT TUBE`), ]
+colnames(RT_BCN)[2] <- "SAMPLE"
+# Some samples are not available even if there was a RT tube
+# (expected as they don't appear on the template)
+RT_BCN[!(RT_BCN$`RT TUBE` %in% dades$Sample_name) & RT_BCN$`RT TENEMOS` != "NO", ]
+
+RT_UPA <- readxl::read_xlsx("data/Samples.xlsx", sheet = 4)
+RT_UPA <- RT_UPA[!is.na(RT_UPA$`RT TUBE`), ]
+colnames(RT_UPA)[2] <- "SAMPLE"
+RT_CTRL <- readxl::read_xlsx("data/Samples.xlsx", sheet = 6)
+RT_CTRL <- RT_CTRL[!is.na(RT_CTRL$`RT TUBE`), ]
+colnames(RT_CTRL)[2] <- "SAMPLE"
+RT_CTRL$`RT TUBE` <- gsub(pattern = " CONT", replacement = "", x = RT_CTRL$`RT TUBE`)
+RT_CTRL$`RT TUBE` <- paste0("Sample ", RT_CTRL$`RT TUBE`)
+# Merge all samples together
+RT <- rbind(RT_BCN[, 1:2], RT_UPA[, 1:2], RT_CTRL[, 1:2])
+
 clinica <- clinica[, c(
   "Week", "pSES.CD", "BarCode", "ContainerName",
   "SubjectID", "ulcers", "Biopsy_Location"
@@ -47,9 +66,18 @@ dades$CT[grep(pattern = "Und", dades$CT)] <- NA
 dades$CT <- as.numeric(dades$CT)
 dades$CTN <- as.numeric(dades$CT)
 
+# Rename a duplicated sample due to piepetting
+# Just 2 wells for HDC gene
+stopifnot(sum(endsWith(dades$Sample_name, "BCN")) == 4)
+dades$Sample_name[endsWith(dades$Sample_name, "BCN")] <- "107C"
+
+dades2 <- merge(dades, RT,
+                by.y = "RT TUBE", by.x = "Sample_name",
+                all.x = TRUE, sort = FALSE)
+
 # Samples ####
 # Samples missing both genes in the same well
-bad_well <- dades %>%
+bad_well <- dades2 %>%
   filter(is.na(CT)) %>%
   select(Experiment, Well, Sample_name, Target.Name) %>%
   group_by(Experiment, Well) %>%
@@ -60,7 +88,7 @@ bad_well <- dades %>%
 bad_well
 stopifnot(nrow(bad_well) == 3)
 # Samples missing a gene from the two wells
-bad_genes <- dades %>%
+bad_genes <- dades2 %>%
   filter(is.na(CT)) %>%
   select(Experiment, Well, Sample_name, Target.Name) %>%
   group_by(Sample_name, Target.Name) %>%
@@ -71,15 +99,12 @@ bad_genes
 stopifnot(nrow(bad_genes) == 8)
 
 # Fill the missing values of ADCYAP with 40 as it is a lowly expressed gene
-dades$CT[dades$Target.Name == "ADCYAP1" &
-           is.na(dades$CT) &
-           dades$Sample_name %in% tail(bad_genes$Sample_name, 6)] <- 40
-
-# Missing sample
-# Merge miriam and barcode
+dades2$CT[dades2$Target.Name == "ADCYAP1" &
+           is.na(dades2$CT) &
+           dades2$Sample_name %in% tail(bad_genes$Sample_name, 6)] <- 40
 
 # Look for the beta actina of the same well as the genes ####
-nested_well <- dades %>%
+nested_well <- dades2 %>%
   filter(Target.Name != "BETA ACTINA") %>%
   group_by(Experiment, Target.Name, Sample_name) %>%
   nest(data = Well)
@@ -90,7 +115,7 @@ nested_well$data <- lapply(nested_well$data, unlist)
 xy <- vector("list", length = nrow(nested_well))
 for (i in seq_len(nrow(nested_well))) {
   x <- nested_well[i, ]
-  wells_value <- dades %>%
+  wells_value <- dades2 %>%
     filter(`Sample_name` == x[["Sample_name"]],
            `Experiment` == x[["Experiment"]],
            Well %in% x[["data"]][[1]]
@@ -108,15 +133,32 @@ table(unlist(ba))
 
 # Look how many missing values of gene per target sample, experiment
 gene <- sapply(xy, function(x){
-  x[x$`Target Name` != "BETA ACTINA", "nas", drop = TRUE]})
+  x[x$`Target.Name` != "BETA ACTINA", "nas", drop = TRUE]})
 table(gene)
+
 ####
 
-dades$BarCode <- as.factor(dades$BarCode)
+dades2$BarCode <- as.factor(dades2$Sample_name)
 taula <- NULL
 
-for (i in 1:length(levels(dades$BarCode))) {
-  barcode <- levels(dades$BarCode)[i]
+
+dCT <- dades2 %>%
+  arrange(Experiment, SAMPLE, Sample_name) %>%
+  group_by(Experiment, SAMPLE, Sample_name) %>%
+  summarize(
+    Gene = unique(Target.Name[Target.Name != "BETA ACTINA"]),
+    base_expr = mean(CT[Target.Name == "BETA ACTINA"], na.rm = TRUE),
+    target_expr = mean(CT[Target.Name != "BETA ACTINA"], na.rm = TRUE),
+    dCT = base_expr - target_expr,
+    AU = 2^dCT * 1000)
+
+# Check that we only have a missing sample
+stopifnot(sum(is.na(dCT$AU)) == 1)
+stopifnot(sum(is.na(dCT$AU[dCT$Sample_name == "107C"])) == 1)
+dCT <- dCT[!is.na(dCT$AU), ]
+
+for (i in 1:length(levels(dades2$BarCode))) {
+  barcode <- levels(dades2$BarCode)[i]
   if (barcode %in% RT$Sample.ID) {
     message("Present both in Azucena and Miram files")
   }
@@ -133,7 +175,7 @@ for (i in 1:length(levels(dades$BarCode))) {
   if (barcode == "AC7980403") {
     message(i)
   }
-  data <- dades[dades$BarCode == barcode, ]
+  data <- dades2[dades2$BarCode == barcode, ]
   if (nrow(data) == 6) {
     data <- data[!is.na(data$CTN), ]
     bact <- mean(data$CTN[data$Target.Name == "BETA ACTINA"])
@@ -201,7 +243,7 @@ taula[grep("eds", taula$sample), ]
 ## alunes mostres tenen "NaN", mirem-les.
 
 mostres <- as.character(taula$sample[is.nan(taula$DcT)])
-dades_mostres <- dades[dades$BarCode %in% mostres, ]
+dades2_mostres <- dades2[dades2$BarCode %in% mostres, ]
 
 ## Aquestes 6 mostres ja estan marcades en groc a l'excel que
 ## m'ha passat l'Azu, han de tenir el CT mes alt de tot el seu grup.
@@ -210,9 +252,9 @@ taula$CT_mean_KLRC2[is.nan(taula$CT_mean_KLRC2)] <- max(taula$CT_mean_KLRC2[!is.
 taula$DcT <- taula$CT_mean_KLRC2 - taula$CT_mean_B_ACTINA
 taula$AU <- 2^(-taula$DcT) * 1000
 taula$week[taula$week == "52"] <- "14"
-#  Arxiu original a 'O:/IBD_LAB/Personals/Ana/Azu/Dades_Mostres.xlsx'
+#  Arxiu original a 'O:/IBD_LAB/Personals/Ana/Azu/dades2_Mostres.xlsx'
 write.xlsx(
-  x = taula, file = "processed/Dades_mostres_reals21.xlsx",
+  x = taula, file = "processed/dades2_mostres_reals21.xlsx",
   sheetName = "1", col.names = T, row.names = F
 )
 
