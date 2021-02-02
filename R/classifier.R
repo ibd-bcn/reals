@@ -31,7 +31,7 @@ training_upa <- upa[ inTrain,]
 testing_upa  <- upa[-inTrain,]
 
 # Following https://machinelearningmastery.com/feature-selection-with-the-caret-r-package/
-control <- trainControl(method="repeatedcv", number = 10, repeats = 10,
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 10,
                         classProbs = TRUE)
 plsFit_upa <- train(
   remission~AQP7+CHI3L1+COL3A1+DERL3+GZMH+HTR3E+`IFN GAMMA`+IL17A
