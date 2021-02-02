@@ -127,7 +127,7 @@ for (row in seq_len(nrow(df))) {
 modified <- nested_well[cond, 2:3, drop = TRUE]
 a <- table(grepl("^UP", modified$`Sample Name`), modified$`Target Name`)
 rownames(a) <- c("UPA", "TNF")
-xlsx::write.xlsx(a, file = "processed/samples_added.xlsx")
+# xlsx::write.xlsx(a, file = "processed/samples_added.xlsx")
 
 
 # Verify that the samples with missing values have high values of the ones
@@ -227,13 +227,13 @@ if (nrow(erroneous) > 1) {
   dev.off()
 }
 
-write.csv(reals, "processed/reals.csv", row.names = FALSE)
+# write.csv(reals, "processed/reals.csv", row.names = FALSE)
 
 # Check the results ####
 multiple_exp <- reals %>%
   group_by(`Sample Name`) %>%
   summarise(n = n_distinct(`Experiment Name`))
-m <-multiple_exp %>%
+m <- multiple_exp %>%
   group_by(n) %>%
   count()
 
@@ -402,7 +402,8 @@ response <- df %>%
   nest(AnyUlcers = c(Ulcers, Time)) %>%
   mutate(remission = map(AnyUlcers, remission)) %>%
   ungroup() %>%
-  select(-AnyUlcers)
+  select(-AnyUlcers) %>%
+  mutate(remission = unlist(remission, recursive = FALSE))
 
 
 response$remission[response$remission == "missing"] <- "no"
