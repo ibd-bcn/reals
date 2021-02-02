@@ -650,7 +650,7 @@ for(i in levels(dades$Target)){
 
 
   grid.arrange(upa, tnf, zeros, legend,
-               nrow = 2, ncol=2)
+               nrow = 2, ncol = 2)
 
 }
 dev.off()
@@ -665,7 +665,7 @@ i <- 1
 for (gene in unique(dff$Target)) {
   for (site in unique(dff$Location)) {
     for (study in c("UPA", "TNF")) {
-      for (rem in c("yes", "no")){
+      for (rem in c("yes", "no")) {
         d <- filter(dff,
                     Target == gene,
                     Location == site,
@@ -676,10 +676,8 @@ for (gene in unique(dff$Target)) {
                  Location = site,
                  Target = gene,
                  remission = rem)
-
-        i <- i +1
+        i <- i + 1
       }
-
     }
   }
 }
