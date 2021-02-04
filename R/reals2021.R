@@ -6,11 +6,12 @@ library("ggpubr")
 library("tidyr", quietly = TRUE, warn.conflicts = FALSE)
 library("ggthemes", warn.conflicts = FALSE)
 library("Rmisc", quietly = TRUE, warn.conflicts = FALSE, mask.ok = "mutate")
-library("dplyr", quietly = TRUE, warn.conflicts = FALSE)
 library("gridExtra", quietly = TRUE, warn.conflicts = FALSE)
 library("grid")
 library("purrr")
 library("broom")
+library("readxl")
+library("dplyr", quietly = TRUE, warn.conflicts = FALSE)
 
 # Dades
 new_files <- list.files(pattern = "*.xls", path = "data/reals2021", full.names = TRUE)
@@ -33,7 +34,7 @@ RT_BCN <- RT_BCN[!is.na(RT_BCN$`RT TUBE`), ]
 colnames(RT_BCN)[2] <- "SAMPLE"
 # Some samples are not available even if there was a RT tube
 # (expected as they don't appear on the template)
-RT_BCN[!(RT_BCN$`RT TUBE` %in% dades$Sample_name) & RT_BCN$`RT TENEMOS` != "NO", ]
+stopifnot(nrow(RT_BCN[!(RT_BCN$`RT TUBE` %in% dades$Sample_name) & RT_BCN$`RT TENEMOS` != "NO", ]) == 100)
 
 RT_UPA <- readxl::read_xlsx("data/Samples.xlsx", sheet = 4)
 RT_UPA <- RT_UPA[!is.na(RT_UPA$`RT TUBE`), ]
@@ -58,6 +59,16 @@ dades$CT <- as.numeric(dades$CT)
 # Just 2 wells for HDC gene
 stopifnot(sum(endsWith(dades$Sample_name, "BCN")) == 4)
 dades$Sample_name[endsWith(dades$Sample_name, "BCN")] <- "107C"
+# Use consistent sample name
+upa_logic <- endsWith(dades$Sample_name, "UP") |
+  endsWith(dades$Sample_name, "UPA") |
+  endsWith(dades$Sample_name, "UPA REPETICIO TPSAB1") # Watch out later
+samples_upa <- dades$Sample_name[upa_logic]
+dades$Sample_name[upa_logic] <- gsub(
+  pattern = "Sample\\s*(\\d+)\\s*UPA?.*",
+  replacement = "UP\\1",
+  x = samples_upa)
+
 
 dades2 <- merge(dades, RT,
                 by.y = "RT TUBE", by.x = "Sample_name",
@@ -75,7 +86,7 @@ bad_well <- dades2 %>%
   select(-n) %>%
   filter(!is.na(sample)) # Blanks
 bad_well
-stopifnot(nrow(bad_well) == 3)
+stopifnot(nrow(bad_well) == 5) # 3 From BCN and 2 from UPA
 # Samples missing a gene from the two wells
 bad_genes <- dades2 %>%
   filter(is.na(CT)) %>%
@@ -85,12 +96,15 @@ bad_genes <- dades2 %>%
   filter(n != 1, !is.na(Sample_name)) %>%
   select(-n)
 bad_genes
-stopifnot(nrow(bad_genes) == 8)
+stopifnot(nrow(bad_genes) == 8 + 3) # 8 from BCN and 3 from UPA
 
+to_be_correct_genes <- bad_genes %>%
+  filter(Target.Name == "ADCYAP1") %>%
+  pull(Sample_name)
 # Fill the missing values of ADCYAP with 40 as it is a lowly expressed gene
 dades2$CT[dades2$Target.Name == "ADCYAP1" &
            is.na(dades2$CT) &
-           dades2$Sample_name %in% tail(bad_genes$Sample_name, 6)] <- 40
+           dades2$Sample_name %in% to_be_correct_genes] <- 40
 
 # Check beta actina ####
 nested_well <- dades2 %>%
@@ -141,13 +155,13 @@ antiTNF <- dades2 %>%
     AU = 2^dCT * 1000) %>%
   ungroup()
 
-
 # Check that we only have a missing sample
 stopifnot(all(antiTNF$base_n <= 2))
 stopifnot(all(antiTNF$target_n <= 2))
-stopifnot(sum(is.na(antiTNF$AU)) == 1)
+stopifnot(sum(is.na(antiTNF$AU)) <= 1)
 stopifnot(sum(is.na(antiTNF$AU[antiTNF$Sample_name == "107C"])) == 1)
 antiTNF <- antiTNF %>%
+  filter(base_n >= 1) %>%
   select(-base_n, -target_n) %>%
   filter(!is.na(AU))
 
@@ -159,7 +173,8 @@ ctrl_groups <- dades2 %>%
   group_by(Experiment, SAMPLE, Sample_name) %>%
   filter(Target.Name != "BETA ACTINA") %>%
   mutate(group = Target.Name) %>%
-  select(Well, group)
+  select(Well, group) %>%
+  ungroup()
 
 
 ctrl <- dades2 %>%
@@ -184,6 +199,37 @@ stopifnot(all(ctrl$target_n == 2))
 ctrl <- select(ctrl, -group, -base_n, -target_n)
 
 ## UPA ####
+# Find which wells have the data for the same genes of samples of experiments
+upa_groups <- dades2 %>%
+  filter(startsWith(Sample_name, "UP")) %>%
+  arrange(Experiment, SAMPLE, Sample_name, Well) %>%
+  group_by(Experiment, SAMPLE, Sample_name) %>%
+  filter(Target.Name != "BETA ACTINA") %>%
+  mutate(group = Target.Name) %>%
+  select(Well, group) %>%
+  ungroup()
+
+upa <- dades2 %>%
+  filter(startsWith(Sample_name, "UP")) %>%
+  arrange(Experiment, SAMPLE, Sample_name, Well) %>%
+  full_join(upa_groups) %>%
+  group_by(Experiment, SAMPLE, Sample_name, group) %>%
+  summarize(
+    Gene = unique(Target.Name[Target.Name != "BETA ACTINA"]),
+    base_expr = mean(CT[Target.Name == "BETA ACTINA"], na.rm = TRUE),
+    base_n = sum(!is.na(CT[Target.Name == "BETA ACTINA"])),
+    target_expr = mean(CT[Target.Name != "BETA ACTINA"], na.rm = TRUE),
+    target_n = sum(!is.na(CT[Target.Name != "BETA ACTINA"])),
+    dCT = base_expr - target_expr,
+    AU = 2^dCT * 1000) %>%
+  ungroup()
+stopifnot(all(upa$group == upa$Gene))
+stopifnot(all(upa$base_n <= 2))
+stopifnot(all(upa$target_n <= 2))
+stopifnot(sum(is.na(upa$AU)) == 0)
+upa <- upa %>%
+  filter(base_n >= 1) %>%
+  select(-group, -base_n, -target_n)
 
 # Merge metadata ####
 # To remember on this datasets there is only one segment per patient
@@ -249,10 +295,11 @@ df_bcn <- left_join(df_bcn, response) %>%
   mutate(Study = "BCN",
          remitter = case_when(
            Time == "w0" ~ "w0",
-           Time == "w14" & remission == "yes" ~ "w14 remitter",
-           Time == "w14" & remission == "no" ~ "w14 non-remitter",
+           Time == "w14" & remission == "yes" ~ "w14 R",
+           Time == "w14" & remission == "no" ~ "w14 NR",
            TRUE ~ "strange"
-         ))
+         )) %>%
+  ungroup()
 
 ## Controls ####
 
@@ -267,7 +314,7 @@ ctrl <- select(ctrl, -base_expr, target_expr, -dCT,
                -Sample_name, -Experiment)
 
 ## UPA ####
-upa_codes <- readxl::read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx",
+upa_codes <- read_xlsx("data/RT UPA DISEASE BLOC 1 2 3 500NG 20UL.xlsx",
                                range = cell_cols(1:7)) %>%
   filter(!is.na(`PLACA MICRONIC`))
 
@@ -286,7 +333,7 @@ bd_upa <- bd_upa %>%
   distinct()
 
 # Prepare the data for filtering and remissions
-df_upa <- merge(UPA, upa_codes,  by.x = "Id", by.y = "RT TUBE",
+df_upa <- merge(upa, upa_codes,  by.x = "Sample_name", by.y = "RT TUBE",
                 all.x = TRUE, all.y = FALSE) %>%
   left_join(bd_upa, by = c("nº muestra" = "BarCode")) %>%
   mutate(ContainerName = gsub("Biopsy ", "", ContainerName),
@@ -295,8 +342,8 @@ df_upa <- merge(UPA, upa_codes,  by.x = "Id", by.y = "RT TUBE",
          pSES.CD = as.numeric(pSES.CD),
          remission_old = case_when(
            Week == "w0" ~ "w0",
-           Week != "w0" & pSES.CD < 5 ~ "w14 remiters",
-           Week != "w0" & pSES.CD >= 5 ~ "w14 non-remiters",
+           Week != "w0" & pSES.CD < 5 ~ "w14 R",
+           Week != "w0" & pSES.CD >= 5 ~ "w14 NR",
            TRUE ~ Week),
          SubjectID = as.character(SubjectID)) %>%
   filter(!(Week == "w0" & ulcers == "no")) %>%
@@ -309,6 +356,10 @@ response <- df_upa %>%
   mutate(remission = purrr::map_chr(AnyUlcers, remission)) %>%
   unnest(AnyUlcers)
 
+w0_remitters_upa <- read_xlsx("processed/missing_response based on ulcers UPA.xlsx") %>%
+  mutate(remitter = tolower(remitter)) %>%
+  rename(Biopsy_Location = "Biopsy_Location week 0") %>%
+  select(Patient, remitter, Biopsy_Location)
 response_all <- merge(response, w0_remitters_upa,
                       by.x = c("SubjectID", "Biopsy_Location"),
                       by.y = c("Patient", "Biopsy_Location"),
@@ -321,128 +372,188 @@ df_upa <- df_upa %>%
   left_join(distinct(response_all)) %>%
   mutate(remission = if_else(is.na(remission), "yes", remission),
          Time = if_else(Time == "w52", "w14", Time)) %>%
-  distinct()
+  distinct() %>%
+  ungroup() %>%
+  select(-Experiment) %>%
+  mutate(Study = "UPA")
 
 #  Write
 write.xlsx(
-  x = dCT, file = "processed/mostres_reals21.xlsx",
+  x = df_upa, file = "processed/mostres_reals21_upa.xlsx",
   sheetName = "1", col.names = TRUE, row.names = FALSE
 )
 
 # Merge all data ####
-coln <- c("Sample", "Patient", "Time", "remission", "Target", "AU", "Location")
+coln <- c("Sample", "Patient", "Time", "remission", "Target", "AU", "Location", "Study")
 # Reorder columns and remove some of them.
 
+df_upa2 <- df_upa %>%
+  select(Sample_name, SAMPLE, Time, remission, Gene, AU, Location, Study) %>%
+  mutate(remission = case_when(
+    Time == "w0" ~ "w0",
+    Time != "w0" & remission == "no"~ "w14 NR",
+    Time != "w0" & remission == "yes"~ "w14 R",
+    TRUE ~ "what"
+  ))
+df_bcn2 <- select(df_bcn,
+                 Sample_id, Pacient_id, Time, remitter, Gene, AU, Location, Study)
+ctrl2 <- ctrl %>%
+  mutate(Pacient_id = gsub(pattern = "^(C\\d+)-.+", replacement =  "\\1",
+                           x = SAMPLE)) %>%
+  select(SAMPLE, Pacient_id, Time, remission, Gene, AU, Location, Study)
+colnames(df_upa2) <- coln
+colnames(df_bcn2) <- coln
+colnames(ctrl2) <- coln
+dff <- rbind(df_upa2, ctrl2, df_bcn2)
+dff$Location <- tolower(dff$Location)
 
+write.csv(dff, "processed/mostres_reals21_all.csv", row.names = FALSE)
+write.xlsx(
+  x = dff, file = "processed/mostres_reals21_all.xlsx",
+  sheetName = "1", col.names = TRUE, row.names = FALSE
+)
+
+ctrl_bcn <- merge(ctrl, df_bcn, all = TRUE) # Set colnames
+write.xlsx(ctrl, file = "processed/new_genes_ctrl.xlsx", row.names = FALSE)
 
 # Stats ####
 ## study vs control ####
 colnames(ctrl)[1] <- c("Sample_id")
 colnames(ctrl)[3] <- c("Pacient_id")
 
-ctrl_bcn <- merge(ctrl, df_bcn, all = TRUE) # Set colnames
-write.xlsx(ctrl, file = "processed/new_genes_ctrl.xlsx", row.names = FALSE)
-
-l <- vector("list", length =  length(unique(ctrl_bcn$Gene))*2*2*2)
+length_total <- length(unique(dff$Target)) *
+  length(unique(dff$Location)) *
+  (length(unique(dff$Study)) - 1) # Remove the control group
+l <- vector("list", length =  length_total)
 i <- 1
-for (gene in unique(ctrl_bcn$Gene)) {
-  for (site in unique(ctrl_bcn$Location)) {
-    for (study in c("BCN")) {
-      d <- filter(ctrl_bcn,
-                  Gene == gene,
+for (gene in unique(dff$Target)) {
+  for (site in unique(dff$Location)) {
+    for (study in c("BCN", "UPA")) {
+      d <- filter(dff,
+                  Target == gene,
                   Location == site,
                   Time %in% c("C", "w0"),
                   Study %in% c(study, "C"))
+      l[[i]] <- tidy(wilcox.test(AU ~ Study, data = d)) %>%
+        mutate(Study = study,
+               Location = site,
+               Time = "w0",
+               Target = gene)
+      i <- i + 1
     }
-    l[[i]] <- tidy(wilcox.test(AU ~ Study, data = d)) %>%
-      mutate(Study = study,
-             Location = site,
-             Time = "w0",
-             Gene = gene)
-    i <- i + 1
   }
 }
 
 # Corregir fdr per numero de Targets (genes)
 vsC <- do.call(rbind, l) %>%
   group_by(Location, Study) %>%
-  nest() %>%
-  mutate(fdr = map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr")))) %>%
-  unnest(fdr) %>%
-  arrange(Location, Gene, -p.value) %>%
-  select(Location, Gene, Study, p.value, fdr, method, alternative) %>%
-  mutate(test = paste(Study, "vs C"))
+  mutate(fdr = p.adjust(p.value, method = "fdr")) %>%
+  arrange(Location, Target, -p.value) %>%
+  select(Location, Target, Study, p.value, fdr, method, alternative) %>%
+  mutate(test = paste(Study, "w0 vs C")) %>%
+  as.data.frame()
 
-vsC <- as.data.frame(vsC)
-write.xlsx(vsC, file = "processed/new_genes_BCN_vs_C.xlsx", row.names = FALSE)
+write.xlsx(vsC, file = "processed/new_genes_vs_C.xlsx", row.names = FALSE)
 
 ## antiTNF vs UPA ####
 # Falten
-df_bcn %>%
+bcnVSupa <- dff %>%
   filter(Study != "C",
-         remitter != "w14 non-remitter") %>%
-  nest_by(Gene, Location, remitter) %>%
-  summarize(broom::tidy(wilcox.test(AU ~ Study, data = data)))
+         remission == "w0") %>%
+  nest_by(Target, Location, remission) %>%
+  summarize(broom::tidy(wilcox.test(AU ~ Study, data = data))) %>%
+  group_by(Location) %>%
+  mutate(fdr = p.adjust(p.value, method = "fdr"),
+         test = "BCN w0 vs UPA w0") %>%
+  ungroup() %>%
+  as.data.frame()
 
 ## w0 vs w14 remitters ####
-w0vsw14r <- df_bcn %>%
+w0vsw14r <- dff %>%
   filter(Study != "C",
-         remitter != "w14 non-remitter") %>%
-  nest_by(Gene, Location, Study) %>%
-  summarize(broom::tidy(wilcox.test(AU ~ remitter, data = data))) %>%
+         remission != "w14 NR") %>%
+  nest_by(Target, Location, Study) %>%
+  summarize(broom::tidy(wilcox.test(AU ~ remission, data = data))) %>%
   ungroup() %>%
   group_by(Location, Study) %>%
-  nest() %>%
-  mutate(fdr = map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr"))),
+  mutate(fdr = p.adjust(p.value, n = n(), method = "fdr"),
          test = "w0 vs w12/16 R") %>%
-  unnest(fdr) %>%
-  select(-data, -statistic) %>%
-  arrange(Location, Gene, Study, -p.value)
+  ungroup() %>%
+  select(-statistic) %>%
+  arrange(Location, Target, Study, -p.value)
 
 ## w0 vs w14 non-remitters ####
-w0vsw14nr <- df_bcn %>%
+w0vsw14nr <- dff %>%
   filter(Study != "C",
-         remitter != "w14 remitter") %>%
-  nest_by(Gene, Location, Study) %>%
-  summarize(broom::tidy(wilcox.test(AU ~ remitter, data = data))) %>%
+         remission != "w14 R") %>%
+  nest_by(Target, Location, Study) %>%
+  summarize(broom::tidy(wilcox.test(AU ~ remission, data = data))) %>%
   ungroup() %>%
   group_by(Location, Study) %>%
-  nest() %>%
-  mutate(fdr = map(data, ~mutate(., fdr = p.adjust(p.value, n = n(), method = "fdr"))),
+  mutate(fdr = p.adjust(p.value, n = n(), method = "fdr"),
          test = "w0 vs w12/16 NR") %>%
-  unnest(fdr) %>%
-  select(-data, -statistic) %>%
-  arrange(Location, Gene, Study, -p.value)
+  ungroup() %>%
+  select(-statistic) %>%
+  arrange(Location, Target, Study, -p.value)
+
+## Merge w0 vs w14 ####
+
+w0vsw14 <- rbind(w0vsw14nr, w0vsw14r) %>%
+  filter(Location == "colon") %>%
+  as.data.frame()
+write.xlsx(w0vsw14, "processed/new_genes_statistics_vs_w0.xlsx",
+           row.names = FALSE)
 
 ## controls SEM ####
-
 ctrl_SEM <- ctrl %>%
   group_by(Location, Gene) %>%
   summarize(mean_se(AU)) %>%
   select(-y) %>%
-  ungroup()
-ctrl_SEM <- as.data.frame(ctrl_SEM)
+  ungroup() %>%
+  as.data.frame()
 write.xlsx(x = ctrl_SEM, file = "processed/new_genes_controls_statistics_SEM.xlsx",
            row.names = FALSE)
 
 df_bcn <- as.data.frame(df_bcn)
 write.xlsx(df_bcn, file = "processed/new_genes_AU_antitnf.xlsx")
 
-bcn <- rbind(w0vsw14nr, w0vsw14r) %>%
-  filter(Location == "colon")
-bcn <- as.data.frame(bcn)
-write.xlsx(bcn, "processed/new_genes_antitnf_statistics_vs_w0.xlsx",
-           row.names = FALSE)
-# plots ######
-df_bcn %>%
-  filter(Location == "colon") %>%
-  mutate(remitter = gsub("w14", "week 12/16", x = remitter)) %>%
-  mutate(remitter = gsub("remitter", "R", x = remitter)) %>%
-  mutate(remitter = gsub("non-", "N", x = remitter)) %>%
-  mutate(remitter = forcats::fct_relevel(as.factor(remitter),
-                                c("w0", "week 12/16 R", "week 12/16 NR"))) %>%
+# plots #####
+
+## Figure 3A ####
+dff %>%
+  filter(Location == "colon",
+         Time %in% c("C", "w0")) %>%
+  mutate(Study = forcats::fct_relevel(Study, c("C","UPA", "BCN"))) %>%
   ggplot() +
-  geom_boxplot(aes(remitter, AU)) +
+  geom_boxplot(aes(Study, AU)) +
+  facet_wrap(~Target, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "colon", x = element_blank())
+ggsave("Figures/reals21_new_genes_studies_colon.png")
+
+## Figure 3B ####
+dff %>%
+  filter(Location == "ileum",
+         Time %in% c("C", "w0")) %>%
+  mutate(Study = forcats::fct_relevel(Study, c("C", "UPA", "aTNF"))) %>%
+  ggplot() +
+  geom_boxplot(aes(Study, AU)) +
+  facet_wrap(~Target, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "ileum", x = element_blank())
+ggsave("Figures/reals21_new_genes_studies_ileum.png")
+
+## Figure 4A ####
+dff %>%
+  filter(Location == "colon",
+         Study == "BCN") %>%
+  mutate(remission = gsub("w14", "week 12/16", x = remission)) %>%
+  mutate(remission = gsub("remitter", "R", x = remission)) %>%
+  mutate(remission = gsub("non-", "N", x = remission)) %>%
+  mutate(remission = forcats::fct_relevel(as.factor(remission),
+                                          c("w0", "week 12/16 R", "week 12/16 NR"))) %>%
+  ggplot() +
+  geom_boxplot(aes(remission, AU)) +
   geom_hline(data = ctrl_SEM[ctrl_SEM$Location == "colon", ],
              aes(yintercept = ymin),
              linetype = 5) +
@@ -452,28 +563,29 @@ df_bcn %>%
   facet_wrap(~Gene, scales = "free_y") +
   theme_minimal() +
   labs(title = "colonic antiTNF", x = element_blank())
-ggsave("Figures/reals21_new_genes_antitnf.png")
+ggsave("Figures/reals21_new_genes_colon_antiTNF.png")
 
-ctrl_bcn %>%
-  filter(Location == "colon") %>%
-  mutate(Study = forcats::fct_relevel(Study, c("C", "BCN"))) %>%
+## Figure 4B ####
+dff %>%
+  filter(Location == "colon",
+         Study == "UPA") %>%
+  mutate(remission = gsub("w14", "week 12/16", x = remission)) %>%
+  mutate(remission = gsub("remitter", "R", x = remission)) %>%
+  mutate(remission = gsub("non-", "N", x = remission)) %>%
+  mutate(remission = forcats::fct_relevel(as.factor(remission),
+                                          c("w0", "week 12/16 R", "week 12/16 NR"))) %>%
   ggplot() +
-  geom_boxplot(aes(Study, AU)) +
+  geom_boxplot(aes(remission, AU)) +
+  geom_hline(data = ctrl_SEM[ctrl_SEM$Location == "colon", ],
+             aes(yintercept = ymin),
+             linetype = 5) +
+  geom_hline(data = ctrl_SEM[ctrl_SEM$Location == "colon", ],
+             aes(yintercept = ymax),
+             linetype = 5) +
   facet_wrap(~Gene, scales = "free_y") +
   theme_minimal() +
-  labs(title = "colon", x = element_blank())
-ggsave("Figures/reals21_new_genes_studies_colon.png")
-ctrl_bcn %>%
-  filter(Location == "ileum") %>%
-  mutate(Study = forcats::fct_relevel(Study, c("C", "BCN"))) %>%
-  ggplot() +
-  geom_boxplot(aes(Study, AU)) +
-  facet_wrap(~Gene, scales = "free_y") +
-  theme_minimal() +
-  labs(title = "ileum", x = element_blank())
-ggsave("Figures/reals21_new_genes_studies_ileum.png")
-
-
+  labs(title = "colonic UPA", x = element_blank())
+ggsave("Figures/reals21_new_genes_colon_UPA.png")
 
 ## colon
 taula_colon <- taula[taula$ContainerName == "Biopsy Colon", ]
