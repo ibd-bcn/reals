@@ -467,6 +467,8 @@ bcnVSupa <- dff %>%
          test = "BCN w0 vs UPA w0") %>%
   ungroup() %>%
   as.data.frame()
+write.xlsx(bcnVSupa, file = "processed/new_genes_w0_BCN_vs_UPA.xlsx",
+           row.names = FALSE)
 
 ## w0 vs w14 remitters ####
 w0vsw14r <- dff %>%
