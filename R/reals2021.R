@@ -499,9 +499,7 @@ w0vsw14nr <- dff %>%
   arrange(Location, Target, Study, -p.value)
 
 ## Merge w0 vs w14 ####
-
 w0vsw14 <- rbind(w0vsw14nr, w0vsw14r) %>%
-  filter(Location == "colon") %>%
   as.data.frame()
 write.xlsx(w0vsw14, "processed/new_genes_statistics_vs_w0.xlsx",
            row.names = FALSE)
