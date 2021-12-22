@@ -2,15 +2,15 @@
 ## Real times Azu (UPA) ##
 ##########################
 
-library(gdata)
+library("gdata")
 library("xlsx")
-library(ggplot2)
-library(ggpubr)
-library(plyr)
-library(ggthemes)
-library(Rmisc, quietly =T)
-library(gridExtra)
-library(grid)
+library("ggplot2")
+library("ggpubr")
+library("plyr")
+library("ggthemes")
+library("Rmisc", quietly =T)
+library("gridExtra")
+library("grid")
 
 ### 26/06/2019
 # l'Azu em demana que faci l'analisi de les reals avui que en lluis no hi és (ell les ha fet
